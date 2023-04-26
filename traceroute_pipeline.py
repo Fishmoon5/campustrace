@@ -8,9 +8,6 @@ import time, os
 
 def run_pipeline():
 
-	top_ips_folder_id = '1aLwojyfRyFGBlY0eBlzoYpwjHxFedR-1'
-	traceroute_meas_folder_id = '11b36E_oG1QqsqOMlpWghIjKycHn5mDjm'
-
 	ip_addrs = get_top_ips(top_ips_folder_id)
 
 	tnow = int(time.time())
@@ -20,9 +17,9 @@ def run_pipeline():
 			f.write(t + "\n")
 
 	tc = Traceroute_Conductor(targets_fn)
-	out_fn = tc.run()
-
-	upload_meas(out_fn,traceroute_meas_folder_id)
+	out_fns = tc.run()
+	for out_fn in out_fns:
+		upload_meas(out_fn,traceroute_meas_folder_id)
 
 if __name__ == "__main__":
 	run_pipeline()
