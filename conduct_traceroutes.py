@@ -35,7 +35,7 @@ class Traceroute_Conductor:
 		for row in open(self.targets_fn):
 			if row.strip() == "": continue
 			self.targets[row.strip()] = None
-		self.targets = list(self.targets)
+		self.targets = list(self.targets)[0:10000]
 
 
 	def run(self):
