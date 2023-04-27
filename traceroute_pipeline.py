@@ -14,7 +14,8 @@ def run_pipeline():
 	targets_fn = os.path.join(DATA_DIR,'targets_list','targets-{}.txt'.format(tnow))
 	with open(targets_fn, 'w') as f:
 		for t in ip_addrs:
-			f.write(t + "\n")
+			f.write("{},{},{}\n".format(t, ip_addrs[t][0],ip_addrs[t][1]))
+	
 
 	tc = Traceroute_Conductor(targets_fn)
 	out_fns = tc.run()

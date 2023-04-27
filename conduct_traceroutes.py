@@ -20,7 +20,7 @@ class Traceroute_Conductor:
 	def _traceroute(self, outfn):
 		targets_fn = os.path.join(TMP_DIR, 'targets.txt')
 		# maximum dsts per file
-		targets_sets = split_seq(self.targets, int(len(self.targets) // 50e3))
+		targets_sets = split_seq(list(self.targets), int(len(self.targets) // 50e3))
 		for i,targets_set in enumerate(targets_sets):
 			with open(targets_fn, 'w') as f:
 				for t in targets_set:
@@ -34,9 +34,8 @@ class Traceroute_Conductor:
 		self.targets = {}
 		for row in open(self.targets_fn):
 			if row.strip() == "": continue
-			self.targets[row.strip()] = None
-		self.targets = list(self.targets)[0:10000]
-
+			ip,nbytes,nflows = row.strip().split(',')
+			self.targets[ip] = (float(nbytes),float(nflows))
 
 	def run(self):
 		self.load_targets()
