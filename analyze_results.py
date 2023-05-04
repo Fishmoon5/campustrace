@@ -11,6 +11,9 @@ class Campus_Measurement_Analyzer:
 		self.ip_to_asn = {}
 		self.load_traceroute_helpers()
 
+		self.target_fn = os.path.join(MEASUREMENT_DIR, 'top_ips_nbytes_nflows.txt')
+		self.load_target_data()
+
 	def check_load_siblings(self):
 		""" Loads siblings file, creates mapping of asn -> organization and vice-versa.
 			Useful for checking if two ASNs are basically the same."""
@@ -160,6 +163,12 @@ class Campus_Measurement_Analyzer:
 		self.tr.read_ixp_ip_members(ixp_ip_members_file)
 		self.tr.read_ixp_prefixes(ixp_prefixes_file)
 
+	def load_target_data(self):
+		self.targets = {}
+		for row in open(self.target_fn, 'r'):
+			ip,nbytes,nflows = row.strip().split(',')
+			self.targets[ip] = {'nbytes':float(nbytes), 'nflows':float(nflows)}
+
 	def lookup_asns_if_needed(self, d):
 		"""Looks up ASes associated with IP addresses in d. Uses cymruwhois Python library, which is slow. 
 			Hence we cache answers."""
@@ -186,6 +195,8 @@ class Campus_Measurement_Analyzer:
 		if src == "" or dst == "": return None
 
 		ret = {}
+		ret['src'] = src
+		ret['dst'] = dst
 		raw_ripe_paths = []
 		hop_rtts = []
 		# Extract hops and RTTs
@@ -219,7 +230,7 @@ class Campus_Measurement_Analyzer:
 		asn_path = self.tr.ip_to_asn(raw_ripe_paths)
 		dst_ntwrk = self.parse_asn(dst)
 		if not dst_ntwrk is None:
-			for ashop in asn_path:
+			for ashop in reversed(asn_path):
 				if ashop == dst_ntwrk:
 					ret['reached_dst_network'] = True
 					break
@@ -270,40 +281,108 @@ class Campus_Measurement_Analyzer:
 			all_objs = all_objs + objs
 
 		all_objs = [obj for obj in all_objs if obj is not None]
-
-		asps = [[self.parse_asn(el) for el in obj['as_paths'] if el != 'None'] for obj in all_objs
-			if obj['reached_dst']]
-		print("{} pct ({}) of traceroutes reached a destination".format(100 * len(asps) / len(all_objs),
-			len(asps)))
-		asps = [[self.parse_asn(el) for el in obj['as_paths'] if el != 'None'] for obj in all_objs
-			if obj['reached_dst_network']]
-		print("{} pct ({}) of traceroutes reached the destination network".format(100 * len(asps) / len(all_objs),
-			len(asps)))
+		total_traffic = sum(self.targets[t]['nbytes'] for t in self.targets)
+		asps = {obj['dst']:[self.parse_asn(el) for el in obj['as_paths'] if el != 'None'] for obj in all_objs
+			if obj['reached_dst']}
+		pct_traffic = round(sum(self.targets[t]['nbytes'] for t in asps) / total_traffic * 100.0 ,2)
+		print("{} pct ({}) of traceroutes, {} pct of traffic, reached a destination".format(100 * len(asps) / len(all_objs),
+			len(asps), pct_traffic))
+		asps = {obj['dst']: [self.parse_asn(el) for el in obj['as_paths'] if el != 'None'] for obj in all_objs
+			if obj['reached_dst_network']}
+		pct_traffic = round(sum(self.targets[t]['nbytes'] for t in asps) / total_traffic * 100.0 ,2)
+		print("{} pct ({}) of traceroutes, {} pct of traffic, reached the destination network".format(100 * len(asps) / len(all_objs),
+			len(asps),pct_traffic))
 		second_hops = {}
 		first_hop = '14'
-		for asp in asps:
+		for dst,asp in asps.items():
 			for hop in asp:
 				if hop != first_hop:
 					try:
 						second_hops[hop] += 1
 					except KeyError:
 						second_hops[hop] = 1 
-		print(second_hops)
-		aspls = [len(set(el)) for el in asps]
+					break
+		sorted_second_hops = sorted(second_hops.items(),  key = lambda el : -1 * el[1])
+		print("Top second hop ASes: {}".format(sorted_second_hops[0:20]))
+
+		aspls = {ip:len(set(el)) for ip,el in asps.items()}
 		# for asp, aspl, obj in zip(asps, aspls, all_objs):
 		# 	if aspl == 1:
 		# 		print("1 ! {} {}".format(asp,obj['ip_paths']))
 		# 	elif aspl == 2:
 		# 		print("2!!!! {} {}".format(asp,obj['ip_paths']))
-		x,cdf_x = get_cdf_xy(aspls)
-		plt.plot(x,cdf_x)
+
+		pickle.dump(aspls, open(os.path.join(CACHE_DIR, 'aspls.pkl'),'wb'))
+
+		targs_of_interest = list(aspls)
+		aspl_arr = [aspls[targ] for targ in targs_of_interest]
+		wts = [self.targets[targ]['nbytes'] for targ in targs_of_interest]
+		aspl_arr_wtd = list(zip(aspl_arr,wts))
+		x,cdf_x = get_cdf_xy(aspl_arr_wtd, weighted=True)
+		plt.plot(x,cdf_x,label='Traffic')
+		x,cdf_x = get_cdf_xy(aspl_arr)
+		plt.plot(x,cdf_x,label='Destinations')
+		plt.grid(True)
 		plt.xlabel("AS Path Length")
-		plt.ylabel("CDF of Targets")
+		plt.ylabel("CDF of Destinations/Traffic")
+		plt.legend()
 		plt.savefig('figures/all_aspls.pdf')
 
 	def sync_results(self):
 		## idea is we sync from the cloud
 		pass
+
+	def map_domain_to_keyword(self, domain):
+		# todo -- incorporate priorities
+		for kw in self.keywords:
+			if kw in domain:
+				return kw
+		return None
+
+	def create_domain_keywords(self):
+		domain_to_bytes = {}
+		for row in open(os.path.join(DATA_DIR, 'topdomains_inbytes_outbytes.txt'),'r'):
+			domain,inb,outb = row.strip().split(',')
+			try:
+				domain_to_bytes[domain] += int(inb)
+			except KeyError:
+				domain_to_bytes[domain] = int(inb)
+		total_b = sum(list(domain_to_bytes.values()))
+		self.keywords = {}
+		self.sevice_to_keywords, self.keyword_to_service = {}, {}
+		for row in open(os.path.join(CACHE_DIR, 'domain_keywords.txt'),'r'):
+			keyword,serviceid,priority = row.strip().split(',')
+			self.keywords[keyword] = int(priority)
+			try:
+				self.sevice_to_keywords[serviceid].append(keyword)
+			except KeyError:
+				self.sevice_to_keywords[serviceid] = [keyword] 
+			self.keyword_to_service[keyword] = serviceid
+
+		dump_list = []
+		mapped_bytes, unmapped_bytes = 0,0
+		kw_mappings = {}
+		for domain,nb in domain_to_bytes:
+			kw = self.map_domain_to_keyword(domain)
+			if kw is None:
+				unmapped_bytes += nb
+				dump_list.append((domain,nb))
+			else:
+				mapped_bytes += nb
+				service = self.self.keyword_to_service[kw]
+				try:
+					kw_mappings[service].append(domain)
+				except KeyError:
+					kw_mappings[service] = [domain]
+
+		with open(os.path.join(CACHE_DIR, 'services_inbytes_outbytes.txt'),'w') as f:
+			for service,domains in kw_mapppings.items():
+				this_service_bytes = sum(domain_to_bytes[domain] for domain in domains)
+				domain_str = "---".join(domains)
+				f.write("{},{},{}\n".format(service,this_service_bytes,domain_str))
+		with open(os.path.join(CACHE_DIR, 'unmapped_domains.txt'),'w') as f:
+			for domain,nb in sorted(dump_list, key = lambda el : -1 * el[1]):
+				f.write("{},{},{}\n".format(domain,nb,round(nb*100.0/total_b,3)))
 
 	def run(self):
 		self.parse_result_set()
@@ -311,7 +390,7 @@ class Campus_Measurement_Analyzer:
 
 if __name__ == "__main__":
 	cma = Campus_Measurement_Analyzer()
-	cma.run()
+	# cma.run()
+	cma.create_domain_keywords()
 
-# ip, aspath, aspl, geolocation ideally,
 
