@@ -2,6 +2,7 @@ import os,glob,numpy as np, json, tqdm, csv, pytricia, gzip, matplotlib.pyplot a
 from vasilis_traceroute import Traceroute
 from helpers import *
 from constants import *
+from google_utilities import *
 
 
 class Campus_Measurement_Analyzer:
@@ -9,10 +10,7 @@ class Campus_Measurement_Analyzer:
 		self.asn_cache_file = "ip_to_asn.csv" # we slowly build the cache over time, as we encounter IP addresses
 		self.as_siblings = {}
 		self.ip_to_asn = {}
-		self.load_traceroute_helpers()
-
-		self.target_fn = os.path.join(MEASUREMENT_DIR, 'top_ips_nbytes_nflows.txt')
-		self.load_target_data()
+		self.target_fn = os.path.join(MEASUREMENT_DIR, 'topips_buildingip_inbytes_outbytes.txt')
 
 	def check_load_siblings(self):
 		""" Loads siblings file, creates mapping of asn -> organization and vice-versa.
@@ -84,6 +82,8 @@ class Campus_Measurement_Analyzer:
 				# IP
 				try:
 					asn = self.ip_to_asn[ip32_to_24(ip_or_asn)]
+					if asn.lower() == 'unknown' or asn.lower() == 'none' or asn.lower() == "na" or asn.lower() == "null": 
+						raise KeyError
 				except KeyError:
 					asn = self.routeviews_pref_to_asn.get(ip_or_asn + "/32")
 					if asn is None: return None
@@ -154,6 +154,8 @@ class Campus_Measurement_Analyzer:
 						self.routeviews_asn_to_pref[asn] = [pref + "/" + l]
 					self.routeviews_pref_to_asn[pref] = asn
 
+		self.routeviews_pref_to_asn['199.109.0.0/16'] = self.parse_asn(3754)
+
 	def load_traceroute_helpers(self):
 		# Traceroute parsing helper class from Vasilis Giotsas
 		self.check_load_ip_to_asn()
@@ -166,8 +168,16 @@ class Campus_Measurement_Analyzer:
 	def load_target_data(self):
 		self.targets = {}
 		for row in open(self.target_fn, 'r'):
-			ip,nbytes,nflows = row.strip().split(',')
-			self.targets[ip] = {'nbytes':float(nbytes), 'nflows':float(nflows)}
+			ip,_,inbytes,outbytes = row.strip().split(',')
+			inbytes = float(inbytes)
+			outbytes = float(outbytes)
+			try:
+				self.targets[ip]
+			except KeyError:
+				self.targets[ip] = {'in': 0, 'out':0, 'total': 0}
+			self.targets[ip]['in'] += inbytes
+			self.targets[ip]['out'] += outbytes
+			self.targets[ip]['total'] += (inbytes + outbytes)
 
 	def lookup_asns_if_needed(self, d):
 		"""Looks up ASes associated with IP addresses in d. Uses cymruwhois Python library, which is slow. 
@@ -262,36 +272,103 @@ class Campus_Measurement_Analyzer:
 		
 		return ret
 
-	def parse_result_set(self):
-		lookup_ips = []
-		for result_fn in tqdm.tqdm(glob.glob(os.path.join(MEASUREMENT_DIR, '*.json')),
-			desc="Parsing result fns to see if we need to map ASNs."):
-			these_results = json.load(open(result_fn,'r'))
-			these_results = [result for result in these_results if result['type'] == 'trace']
-			lookup_ips = lookup_ips + [el for result in these_results for el in 
-				self.parse_ripe_trace_result(result,ret_ips=True) ]
-		self.lookup_asns_if_needed(list(set([ip32_to_24(ip) for ip in lookup_ips])))
-		all_objs = []
-		for result_fn in tqdm.tqdm(glob.glob(os.path.join(MEASUREMENT_DIR, '*.json')), 
-			desc="Parsing traceroutes"):
-			these_results = json.load(open(result_fn,'r'))
-			these_results = [result for result in these_results if result['type'] == 'trace']
-			objs = [self.parse_ripe_trace_result(result) for result in these_results]
+	def parse_ping_result_set(self):
+		## get RTT to all destinations
+		# self.load_traceroute_helpers()
+		# self.load_target_data()
 
-			all_objs = all_objs + objs
+		targ_to_rtt =  {}
 
-		all_objs = [obj for obj in all_objs if obj is not None]
-		total_traffic = sum(self.targets[t]['nbytes'] for t in self.targets)
-		asps = {obj['dst']:[self.parse_asn(el) for el in obj['as_paths'] if el != 'None'] for obj in all_objs
-			if obj['reached_dst']}
-		pct_traffic = round(sum(self.targets[t]['nbytes'] for t in asps) / total_traffic * 100.0 ,2)
-		print("{} pct ({}) of traceroutes, {} pct of traffic, reached a destination".format(100 * len(asps) / len(all_objs),
-			len(asps), pct_traffic))
-		asps = {obj['dst']: [self.parse_asn(el) for el in obj['as_paths'] if el != 'None'] for obj in all_objs
-			if obj['reached_dst_network']}
-		pct_traffic = round(sum(self.targets[t]['nbytes'] for t in asps) / total_traffic * 100.0 ,2)
-		print("{} pct ({}) of traceroutes, {} pct of traffic, reached the destination network".format(100 * len(asps) / len(all_objs),
-			len(asps),pct_traffic))
+		times_of_interest = ['1683686967']
+		all_ping_files = glob.glob(os.path.join(MEASUREMENT_DIR, 'pings-*.json'))
+		all_ping_files = [ping_file for ping_file in all_ping_files if any(toi in ping_file for toi in times_of_interest)]
+
+		for result_fn in tqdm.tqdm(all_ping_files,
+			desc="Parsing RTT measurements."):
+			these_results = json.load(open(result_fn,'r'))
+			for result in these_results:
+				if result['type'] != 'ping': continue
+				for p in result['responses']:
+					try:
+						targ_to_rtt[result['dst']].append(p['rtt'])
+					except KeyError:
+						targ_to_rtt[result['dst']] = [p['rtt']]
+
+		for dst,lats in targ_to_rtt.items():
+			targ_to_rtt[dst] = {
+				'min': np.min(lats),
+				'mean': np.mean(lats),
+				'med': np.median(lats),
+			}
+		pickle.dump(targ_to_rtt, open(os.path.join(CACHE_DIR, 'rtts.pkl'),'wb'))
+
+	def parse_trace_result_set(self):
+		self.load_target_data()
+		all_data_cache_fn = os.path.join(CACHE_DIR, 'aspls_all_objs.pkl')
+		if not os.path.exists(all_data_cache_fn):
+			self.load_traceroute_helpers()
+
+			times_of_interest = ['1683684069']
+			all_trace_files = glob.glob(os.path.join(MEASUREMENT_DIR, 'traces-*.json'))
+			all_trace_files = [trace_file for trace_file in all_trace_files if any(toi in trace_file for toi in times_of_interest)]
+			
+			lookup_ips = []
+			for result_fn in tqdm.tqdm(all_trace_files,
+				desc="Parsing result fns to see if we need to map ASNs."):
+				these_results = json.load(open(result_fn,'r'))
+				these_results = [result for result in these_results if result['type'] == 'trace']
+				lookup_ips = lookup_ips + [el for result in these_results for el in 
+					self.parse_ripe_trace_result(result,ret_ips=True) ]
+			self.lookup_asns_if_needed(list(set([ip32_to_24(ip) for ip in lookup_ips])))
+			all_objs = []
+			for result_fn in tqdm.tqdm(all_trace_files, 
+				desc="Parsing traceroutes"):
+				these_results = json.load(open(result_fn,'r'))
+				these_results = [result for result in these_results if result['type'] == 'trace']
+				objs = []
+				for result in these_results:
+					objs.append(self.parse_ripe_trace_result(result))
+
+				all_objs = all_objs + objs
+
+			all_objs_by_dst = {}
+			for obj in all_objs:
+				if obj is None: continue
+				try:
+					if all_objs_by_dst[obj['dst']]['time'] < obj['time']:
+						all_objs_by_dst[obj['dst']] = obj	
+				except KeyError:
+					all_objs_by_dst[obj['dst']] = obj
+			all_objs = all_objs_by_dst
+
+			keep_dsts = get_intersection(self.targets, all_objs)
+			self.targets = {t:self.targets[t] for t in keep_dsts}
+			all_objs = {t: all_objs[t] for t in keep_dsts}
+
+			total_traffic = sum(self.targets[t]['total'] for t in self.targets)
+			asps = {t:[self.parse_asn(el) for el in obj['as_paths'] if el != 'None'] for t,obj in all_objs.items()
+				if obj['reached_dst']}
+			pct_traffic = round(sum(self.targets[t]['total'] for t in asps) / total_traffic * 100.0 ,2)
+			print("{} pct ({}) of traceroutes, {} pct of traffic, reached a destination".format(100 * len(asps) / len(all_objs),
+				len(asps), pct_traffic))
+			asps = {t: [self.parse_asn(el) for el in obj['as_paths'] if el != 'None'] for t,obj in all_objs.items()
+				if obj['reached_dst_network']}
+			pct_traffic = round(sum(self.targets[t]['total'] for t in asps) / total_traffic * 100.0 ,2)
+			print("{} pct ({}) of traceroutes, {} pct of traffic, reached the destination network".format(100 * len(asps) / len(all_objs),
+				len(asps),pct_traffic))
+
+			aspls = {ip:len(set(el)) for ip,el in asps.items()}
+			# for asp, aspl, obj in zip(asps, aspls, all_objs):
+			# 	if aspl == 1:
+			# 		print("1 ! {} {}".format(asp,obj['ip_paths']))
+			# 	elif aspl == 2:
+			# 		print("2!!!! {} {}".format(asp,obj['ip_paths']))
+
+			pickle.dump([asps, aspls, all_objs], open(all_data_cache_fn,'wb'))
+			pickle.dump(aspls, open(os.path.join(CACHE_DIR, 'aspls.pkl'),'wb'))
+		else:
+			asps, aspls, all_objs = pickle.load(open(all_data_cache_fn, 'rb'))
+
 		second_hops = {}
 		first_hop = '14'
 		for dst,asp in asps.items():
@@ -303,23 +380,31 @@ class Campus_Measurement_Analyzer:
 						second_hops[hop] = 1 
 					break
 		sorted_second_hops = sorted(second_hops.items(),  key = lambda el : -1 * el[1])
-		print("Top second hop ASes: {}".format(sorted_second_hops[0:20]))
+		top_second_hops = sorted_second_hops[0:20]
+		top_second_hop_ases = [el[0] for el in sorted_second_hops[0:20]]
+		print("Top second hop ASes: {}".format(top_second_hops))
+		for dst,asp in asps.items():
+			for hop in asp:
+				if hop != first_hop:
+					if hop in top_second_hop_ases and hop not in ['174','3257', '16509','3754','40627']:
+						print("{} {}".format(hop,first_hop))
+						print("{} {} {}".format(dst,asp,all_objs[dst]))
+					break
+		targs_of_interest = list(get_intersection(aspls,self.targets))
 
-		aspls = {ip:len(set(el)) for ip,el in asps.items()}
-		# for asp, aspl, obj in zip(asps, aspls, all_objs):
-		# 	if aspl == 1:
-		# 		print("1 ! {} {}".format(asp,obj['ip_paths']))
-		# 	elif aspl == 2:
-		# 		print("2!!!! {} {}".format(asp,obj['ip_paths']))
-
-		pickle.dump(aspls, open(os.path.join(CACHE_DIR, 'aspls.pkl'),'wb'))
-
-		targs_of_interest = list(aspls)
 		aspl_arr = [aspls[targ] for targ in targs_of_interest]
-		wts = [self.targets[targ]['nbytes'] for targ in targs_of_interest]
-		aspl_arr_wtd = list(zip(aspl_arr,wts))
-		x,cdf_x = get_cdf_xy(aspl_arr_wtd, weighted=True)
-		plt.plot(x,cdf_x,label='Traffic')
+		for k, lab in zip(['in', 'out', 'total'], 
+			['In Bytes', 'Out Bytes', "Total Bytes"]):
+			wts = [self.targets[targ][k] for targ in targs_of_interest]
+			aspl_arr_wtd = list(zip(aspl_arr,wts))
+			aspl_arr_wtd_with_targs = list(zip(aspl_arr,wts,targs_of_interest))
+
+			sorted_arr = sorted(aspl_arr_wtd_with_targs, key = lambda el : -1 * el[1])
+			print(lab)
+			print(sorted_arr[0:30])
+
+			x,cdf_x = get_cdf_xy(aspl_arr_wtd, weighted=True)
+			plt.plot(x,cdf_x,label=lab)
 		x,cdf_x = get_cdf_xy(aspl_arr)
 		plt.plot(x,cdf_x,label='Destinations')
 		plt.grid(True)
@@ -329,68 +414,22 @@ class Campus_Measurement_Analyzer:
 		plt.savefig('figures/all_aspls.pdf')
 
 	def sync_results(self):
-		## idea is we sync from the cloud
-		pass
-
-	def map_domain_to_keyword(self, domain):
-		# todo -- incorporate priorities
-		for kw in self.keywords:
-			if kw in domain:
-				return kw
-		return None
-
-	def create_domain_keywords(self):
-		domain_to_bytes = {}
-		for row in open(os.path.join(DATA_DIR, 'topdomains_inbytes_outbytes.txt'),'r'):
-			domain,inb,outb = row.strip().split(',')
-			try:
-				domain_to_bytes[domain] += int(inb)
-			except KeyError:
-				domain_to_bytes[domain] = int(inb)
-		total_b = sum(list(domain_to_bytes.values()))
-		self.keywords = {}
-		self.sevice_to_keywords, self.keyword_to_service = {}, {}
-		for row in open(os.path.join(CACHE_DIR, 'domain_keywords.txt'),'r'):
-			keyword,serviceid,priority = row.strip().split(',')
-			self.keywords[keyword] = int(priority)
-			try:
-				self.sevice_to_keywords[serviceid].append(keyword)
-			except KeyError:
-				self.sevice_to_keywords[serviceid] = [keyword] 
-			self.keyword_to_service[keyword] = serviceid
-
-		dump_list = []
-		mapped_bytes, unmapped_bytes = 0,0
-		kw_mappings = {}
-		for domain,nb in domain_to_bytes:
-			kw = self.map_domain_to_keyword(domain)
-			if kw is None:
-				unmapped_bytes += nb
-				dump_list.append((domain,nb))
-			else:
-				mapped_bytes += nb
-				service = self.self.keyword_to_service[kw]
-				try:
-					kw_mappings[service].append(domain)
-				except KeyError:
-					kw_mappings[service] = [domain]
-
-		with open(os.path.join(CACHE_DIR, 'services_inbytes_outbytes.txt'),'w') as f:
-			for service,domains in kw_mapppings.items():
-				this_service_bytes = sum(domain_to_bytes[domain] for domain in domains)
-				domain_str = "---".join(domains)
-				f.write("{},{},{}\n".format(service,this_service_bytes,domain_str))
-		with open(os.path.join(CACHE_DIR, 'unmapped_domains.txt'),'w') as f:
-			for domain,nb in sorted(dump_list, key = lambda el : -1 * el[1]):
-				f.write("{},{},{}\n".format(domain,nb,round(nb*100.0/total_b,3)))
+		parent_id = traceroute_meas_folder_id
+		have_results = os.listdir(MEASUREMENT_DIR)
+		gdrive = get_gdrive()
+		files = get_file_list(gdrive, parent_id)
+		for fn in tqdm.tqdm(files,desc="Downloading files from cloud."):
+			if fn['originalFilename'] not in have_results:
+				out_fn = os.path.join(MEASUREMENT_DIR, fn['originalFilename'])
+				download_file_by_id(gdrive, fn['id'], out_fn)
 
 	def run(self):
-		self.parse_result_set()
+		self.sync_results()
+		self.parse_ping_result_set()
+		self.parse_trace_result_set()
 
 
 if __name__ == "__main__":
 	cma = Campus_Measurement_Analyzer()
-	# cma.run()
-	cma.create_domain_keywords()
-
+	cma.run()
 

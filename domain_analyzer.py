@@ -2,6 +2,7 @@ from constants import *
 from helpers import *
 import os, numpy as np,tqdm
 import matplotlib.pyplot as plt
+from domain_metrics import *
 
 class Domain_Analyzer():
 	def __init__(self):
@@ -88,7 +89,7 @@ class Domain_Analyzer():
 						token_parts[tpart2] = nb
 		# print(sorted(token_parts.items(), key = lambda el : el[1]))
 
-	def compare_building_domains(self):
+	def compare_building_domains(self, metric, **kwargs):
 		domain_bytes_by_building = {}
 		for row in open(os.path.join(DATA_DIR, 'topdomains_buildingip_inbytes_outbytes.txt'),'r'):
 			domain,building,inb,outb = row.strip().split(',')
@@ -175,9 +176,20 @@ class Domain_Analyzer():
 					domains_arr[divider_to_i[divider],service_to_i[service]] = nb
 					# domains_arr[divider_to_i[divider],service_to_i[service]] = np.log10(nb + .00001)
 					# domains_arr[divider_to_i[divider],service_to_i[service]] = ranked_services[service]
+			
+			traffic_by_service = np.sum(domains_arr,axis=0)
+			global_domain_traffic = np.sort(traffic_by_service)[::-1]
+			ttl_traffic = np.sum(global_domain_traffic)
+			global_domain_traffic = global_domain_traffic / ttl_traffic
+			global_domain_traffic_dict = {i:traffic_by_service[i] / ttl_traffic for i in range(len(traffic_by_service))}
+			kwargs['global_domain_traffic'] = global_domain_traffic
+			kwargs['global_domain_traffic_dict'] = global_domain_traffic_dict
+
 			nb_by_divider = np.sum(domains_arr,axis=1)
 			domains_arr = domains_arr / nb_by_divider.reshape((-1,1))
 			nb_by_divider = nb_by_divider / np.max(nb_by_divider.flatten())
+
+
 
 			if divider_type == 'building':
 				interesting_prints = [4,5,6,14,15,16]
@@ -190,66 +202,41 @@ class Domain_Analyzer():
 				for i in np.argsort(domains_arr[divideri,:])[::-1][0:15]:
 					print("{} -- {} {}".format(i,all_services[i],round(domains_arr[divideri,i]*100.0/max_n,4)))
 
-			fig, axs = plt.subplots(n_dividers, n_dividers, figsize=(10, 10))
+
+			fig, axs = plt.subplots(n_dividers, n_dividers, figsize=(10, 12))
 			dist_mat = np.zeros((n_dividers,n_dividers))
-			n_doms = 1000
 			from sympy.combinatorics.permutations import Permutation
 			for divideri in tqdm.tqdm(range(n_dividers),desc="Calculating distances..."):
 				for dividerj in range(n_dividers):
 					if dividerj>divideri: break
-					# d = np.sum(domains_arr[divideri,:] * domains_arr[dividerj,:]) / \
-					# 	(np.linalg.norm(domains_arr[divideri,:]) * np.linalg.norm(domains_arr[dividerj,:]))
-					top_n_domsi = np.argsort(domains_arr[divideri,:])[::-1][0:n_doms]
-					top_n_domsj = np.argsort(domains_arr[dividerj,:])[::-1][0:n_doms]
-					i = get_intersection(top_n_domsi, top_n_domsj)
-					u = set(list(top_n_domsi) + list(top_n_domsj))
+					
+					d = metric(domains_arr[divideri,:], domains_arr[dividerj,:], **kwargs)
 
-					# missing from j
-					bimbj = get_difference(top_n_domsi, top_n_domsj)
-					sorted_missing_j = [(all_services[si],domains_arr[divideri,si],domains_arr[dividerj,si]) for si in sorted(bimbj, key = lambda el : -1 * domains_arr[divideri,el])]
-					# missing from i
-					bjmbi = get_difference(top_n_domsj, top_n_domsi)
-					sorted_missing_i = [(all_services[si],domains_arr[dividerj,si],domains_arr[divideri,si]) for si in sorted(bjmbi, key = lambda el : -1 * domains_arr[dividerj,el])]
-
-					vbi_inter = sum(domains_arr[divideri,_i] for _i in i)
-					vbj_inter = sum(domains_arr[dividerj,_i] for _i in i)
-					vbi_union = sum(domains_arr[divideri,_i] for _i in top_n_domsi)
-					vbj_union = sum(domains_arr[dividerj,_i] for _i in top_n_domsj)
-					vi = vbi_inter + vbj_inter
-					vu = vbi_union + vbj_union
-					d = vi/vu
-					# d = len(i)/len(u)
-
-					# x = np.argsort(domains_arr[divideri,:])
-					# y = np.argsort(domains_arr[dividerj,:])
-					# perm = []
-					# for _x in x:
-					# 	perm.append(np.where(_x==y)[0][0])
-					# transp = Permutation(perm).transpositions()
-					# d = len([t for t in transp if t[0]<1000 or t[1]<1000])
-
-					# if divideri == 5 and dividerj == 4:
-					# 	print(" {} {} {} {}".format(vbi_inter,vbj_inter,vbi_union,vbj_union))
-					# 	print("Missing from J : {}".format(sorted_missing_j[0:5]))
-					# 	print("Missing from I : {}".format(sorted_missing_i[0:5]))
-					# 	print(len(i))
-					# 	print(len(u))
-					# 	exit(0)
-
-					# if divideri == dividerj:
-					# 	d = 0
-					# else:
-					# 	print(d)
-					# 	exit(0)
 					dist_mat[divideri,dividerj] = d
 					dist_mat[dividerj,divideri] = d
+			print(np.min(dist_mat.flatten()))
+			print(np.max(dist_mat.flatten()))
 			dist_mat = dist_mat - np.min(dist_mat.flatten())
 			dist_mat = dist_mat / np.max(dist_mat.flatten())
 			for divideri in range(n_dividers):
 				for dividerj in range(n_dividers):
 					axs[divideri, dividerj].imshow(np.array([[dist_mat[divideri,dividerj]]]), cmap='cool', vmin=0, vmax=1)
-					axs[divideri, dividerj].axis('off')
+					# axs[divideri, dividerj].axis('off')
+					axs[divideri, dividerj].set_xticks([])
+					axs[divideri, dividerj].set_yticks([])
 					axs[divideri, dividerj].set_aspect('equal')
+
+			def divideri_to_lab(divideri):
+				if divider_type == 'building':
+					return cats[divideri]
+				else:
+					return in_order_dividers['category'][divideri]
+
+			for divideri in range(n_dividers):
+				axs[0,divideri].set_title(divideri_to_lab(divideri), rotation=45)
+			for divideri in range(n_dividers):
+				axs[divideri,0].set_ylabel(divideri_to_lab(divideri), rotation=45)
+
 			print(divider_to_i)
 			print(dist_mat.round(2))
 			# Add colorbar
@@ -257,13 +244,16 @@ class Domain_Analyzer():
 			cmap = plt.get_cmap('cool')
 			cax = fig.add_axes([0.93, 0.1, 0.02, 0.8])
 			cb = fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), cax=cax)
-			cb.ax.set_ylabel('Jaccard index')
+			cb.ax.set_ylabel(kwargs.get('axis_lab'), fontsize=20)
 			
 			# Adjust spacing and show plot
 			# fig.text(0.5, 0.05, 'Differences between top %d owners in dividers'%(ntop), ha='center', fontsize=12)
 			# fig.text(0.07, 0.5, 'Differences between top %d owners in dividers'%(ntop), va='center', rotation='vertical', fontsize=12)
 			plt.subplots_adjust(wspace=0, hspace=0)
-			plt.show()
+			# plt.show()
+			plt.savefig('figures/similarities_across_{}-{}.pdf'.format(
+				divider_type, kwargs.get('plt_lab','')))
+			plt.clf(); plt.close()
 
 
 
@@ -271,4 +261,9 @@ class Domain_Analyzer():
 if __name__ == "__main__":
 	da = Domain_Analyzer()
 	da.create_domain_keywords()
-	da.compare_building_domains()
+	metrics = [rbo_wrap,spearman, cosine_similarity, weighted_jaccard, jaccard, euclidean]
+	labs = ['rbo','spearman', 'cos_sim', 'wjac', 'jac', 'euclidean']
+	ax_labs = ['Rank-Biased Overlap', 'Spearman Correlation', 'Cosine Similarity',
+		'Weighted Jaccard Index', 'Jaccard Index', 'Euclidean Distance']
+	for metric,lab,axis_lab in zip(metrics,labs,ax_labs):
+		da.compare_building_domains(metric, n_doms=1000, plt_lab=lab, axis_lab=axis_lab)
