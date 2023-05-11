@@ -192,7 +192,8 @@ class Campus_Measurement_Analyzer:
 				self.ip_to_asn[pref]
 			except KeyError:
 				if self.routeviews_pref_to_asn.get(pref) is not None: continue
-				dont_know.append(pref)
+				dont_know.append(pref_24)
+		dont_know = list(set(dont_know))
 		if dont_know == []: return
 		ret = lookup_asn(dont_know)
 		for k,v in ret.items():
