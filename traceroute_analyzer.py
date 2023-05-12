@@ -158,6 +158,7 @@ class Campus_Measurement_Analyzer:
 
 	def load_traceroute_helpers(self):
 		# Traceroute parsing helper class from Vasilis Giotsas
+		self.check_load_siblings()
 		self.check_load_ip_to_asn()
 		self.tr = Traceroute(ip_to_asn = self.parse_asn)
 		ixp_ip_members_file = os.path.join(DATA_DIR,"ixp_members.merged-20190826.txt") # from Vasilis Giotsas
@@ -305,24 +306,28 @@ class Campus_Measurement_Analyzer:
 
 	def parse_trace_result_set(self):
 		self.load_target_data()
+		self.load_traceroute_helpers()
 		all_data_cache_fn = os.path.join(CACHE_DIR, 'aspls_all_objs.pkl')
 		if not os.path.exists(all_data_cache_fn):
-			self.load_traceroute_helpers()
 
-			times_of_interest = ['1683684069']
+			times_of_interest = ['1683848141', '1683848502']
 			all_trace_files = glob.glob(os.path.join(MEASUREMENT_DIR, 'traces-*.json'))
 			all_trace_files = [trace_file for trace_file in all_trace_files if any(toi in trace_file for toi in times_of_interest)]
 			
+			campus_traffic_destinations_trace_files = [tf for tf in all_trace_files if 'traces-all' not in tf]
+			all_destinations_trace_files = get_difference(all_trace_files, campus_traffic_destinations_trace_files)
+
+
 			lookup_ips = []
 			for result_fn in tqdm.tqdm(all_trace_files,
 				desc="Parsing result fns to see if we need to map ASNs."):
 				these_results = json.load(open(result_fn,'r'))
 				these_results = [result for result in these_results if result['type'] == 'trace']
-				lookup_ips = lookup_ips + [el for result in these_results for el in 
-					self.parse_ripe_trace_result(result,ret_ips=True) ]
-			self.lookup_asns_if_needed(list(set([ip32_to_24(ip) for ip in lookup_ips])))
+				for result in these_results:
+					lookup_ips.append(self.parse_ripe_trace_result(result, ret_ips=True))
+			self.lookup_asns_if_needed(list(set([ip32_to_24(ip) for res_set in lookup_ips for ip in res_set])))
 			all_objs = []
-			for result_fn in tqdm.tqdm(all_trace_files, 
+			for result_fn in tqdm.tqdm(campus_traffic_destinations_trace_files, 
 				desc="Parsing traceroutes"):
 				these_results = json.load(open(result_fn,'r'))
 				these_results = [result for result in these_results if result['type'] == 'trace']
@@ -359,55 +364,129 @@ class Campus_Measurement_Analyzer:
 				len(asps),pct_traffic))
 
 			aspls = {ip:len(set(el)) for ip,el in asps.items()}
-			# for asp, aspl, obj in zip(asps, aspls, all_objs):
-			# 	if aspl == 1:
-			# 		print("1 ! {} {}".format(asp,obj['ip_paths']))
-			# 	elif aspl == 2:
-			# 		print("2!!!! {} {}".format(asp,obj['ip_paths']))
 
-			pickle.dump([asps, aspls, all_objs], open(all_data_cache_fn,'wb'))
-			pickle.dump(aspls, open(os.path.join(CACHE_DIR, 'aspls.pkl'),'wb'))
+
+			all_objs_whole_internet = []
+			for result_fn in tqdm.tqdm(all_destinations_trace_files, 
+				desc="Parsing traceroutes"):
+				these_results = json.load(open(result_fn,'r'))
+				these_results = [result for result in these_results if result['type'] == 'trace']
+				objs = []
+				for result in these_results:
+					objs.append(self.parse_ripe_trace_result(result))
+
+				all_objs_whole_internet = all_objs_whole_internet + objs
+
+			all_objs_by_dst = {}
+			for obj in all_objs_whole_internet:
+				if obj is None: continue
+				try:
+					if all_objs_by_dst[obj['dst']]['time'] < obj['time']:
+						all_objs_by_dst[obj['dst']] = obj	
+				except KeyError:
+					all_objs_by_dst[obj['dst']] = obj
+			all_objs_whole_internet = all_objs_by_dst
+
+			asps_whole_internet = {t: [self.parse_asn(el) for el in obj['as_paths'] if el != 'None'] for t,obj in all_objs_whole_internet.items()
+				if obj['reached_dst_network']}
+			
+
+			aspls_whole_internet = {ip:len(set(el)) for ip,el in asps_whole_internet.items()}
+
+
+			pickle.dump({
+				"asp_campus": asps, 
+				"aspl_campus": aspls, 
+				"all_objs_campus": all_objs,
+				"asp_whole_internet": asps_whole_internet,
+				"aspl_whole_internet": aspls_whole_internet,
+				"all_objs_whole_internet": all_objs_whole_internet,
+			}, open(all_data_cache_fn,'wb'))
+			pickle.dump({
+				'aspl_campus':aspls,
+				'aspl_whole_internet':aspls_whole_internet,
+			}, open(os.path.join(CACHE_DIR, 'aspls.pkl'),'wb'))
 		else:
-			asps, aspls, all_objs = pickle.load(open(all_data_cache_fn, 'rb'))
+			# asps, aspls, all_objs = pickle.load(open(all_data_cache_fn, 'rb'))
+			aspls_obj = pickle.load(open(os.path.join(CACHE_DIR, 'aspls.pkl'),'rb'))
+			aspls = aspls_obj['aspl_campus']
+			aspls_whole_internet = aspls_obj['aspl_whole_internet']
 
-		second_hops = {}
-		first_hop = '14'
-		for dst,asp in asps.items():
-			for hop in asp:
-				if hop != first_hop:
-					try:
-						second_hops[hop] += 1
-					except KeyError:
-						second_hops[hop] = 1 
-					break
-		sorted_second_hops = sorted(second_hops.items(),  key = lambda el : -1 * el[1])
-		top_second_hops = sorted_second_hops[0:20]
-		top_second_hop_ases = [el[0] for el in sorted_second_hops[0:20]]
-		print("Top second hop ASes: {}".format(top_second_hops))
-		for dst,asp in asps.items():
-			for hop in asp:
-				if hop != first_hop:
-					if hop in top_second_hop_ases and hop not in ['174','3257', '16509','3754','40627']:
-						print("{} {}".format(hop,first_hop))
-						print("{} {} {}".format(dst,asp,all_objs[dst]))
-					break
+		# second_hops = {}
+		# first_hop = '14'
+		# for dst,asp in asps.items():
+		# 	for hop in asp:
+		# 		if hop != first_hop:
+		# 			try:
+		# 				second_hops[hop] += 1
+		# 			except KeyError:
+		# 				second_hops[hop] = 1 
+		# 			break
+		# sorted_second_hops = sorted(second_hops.items(),  key = lambda el : -1 * el[1])
+		# top_second_hops = sorted_second_hops[0:20]
+		# top_second_hop_ases = [el[0] for el in sorted_second_hops[0:20]]
+		# print("Top second hop ASes: {}".format(top_second_hops))
+		# for dst,asp in asps.items():
+		# 	for hop in asp:
+		# 		if hop != first_hop:
+		# 			if hop in top_second_hop_ases and hop not in ['174','3257', '16509','3754','40627']:
+		# 				print("{} {}".format(hop,first_hop))
+		# 				print("{} {} {}".format(dst,asp,all_objs[dst]))
+		# 			break
+		not_included = get_difference(self.targets, aspls)
+		sorted_not_included = sorted(not_included, key = lambda el : -1 * self.targets[el]['total'])
+		print("Worst not included {}".format(sorted_not_included[0:100]))
+
 		targs_of_interest = list(get_intersection(aspls,self.targets))
 
+		## load offnets and handle them separately
+		offnet_addresses = pickle.load(open(os.path.join(DATA_DIR, 'offnets.p'),'rb'))
+		# for oa in sorted(get_intersection(offnet_addresses, self.targets),
+		# 	key = lambda el : -1 * self.targets[el]['total'])[0:100]:
+		# 	print("{} -- {} (not in results {})".format(oa, self.targets[oa]['total'], oa in not_included))
+		# 	if not (oa in not_included):
+		# 		print(all_objs[oa])
+		offnet_addresses = get_intersection(targs_of_interest, offnet_addresses)
+		for offnet_address in offnet_addresses:
+			aspls[offnet_address] += .5
+		print(offnet_addresses)
+
+
+		## Get ASPL by AS
+		aspl_by_as = {}
+		for t in targs_of_interest:
+			asn = self.parse_asn(t)
+			if asn is None: continue
+			try:
+				aspl_by_as[asn].append(aspls[t])
+			except KeyError:
+				aspl_by_as[asn] = [aspls[t]]
+		aspl_by_as_max = [np.max(as_aspls) for as_aspls in aspl_by_as.values()]
+		aspl_by_as_min = [np.min(as_aspls) for as_aspls in aspl_by_as.values()]
+		aspl_by_as_med = [np.median(as_aspls) for as_aspls in aspl_by_as.values()]
+
 		aspl_arr = [aspls[targ] for targ in targs_of_interest]
-		for k, lab in zip(['in', 'out', 'total'], 
-			['In Bytes', 'Out Bytes', "Total Bytes"]):
+		for k, lab in zip(['out', 'total', 'in'], 
+			['Out Bytes', 'Total Bytes', "In Bytes"]):
 			wts = [self.targets[targ][k] for targ in targs_of_interest]
 			aspl_arr_wtd = list(zip(aspl_arr,wts))
 			aspl_arr_wtd_with_targs = list(zip(aspl_arr,wts,targs_of_interest))
-
 			sorted_arr = sorted(aspl_arr_wtd_with_targs, key = lambda el : -1 * el[1])
 			print(lab)
 			print(sorted_arr[0:30])
 
 			x,cdf_x = get_cdf_xy(aspl_arr_wtd, weighted=True)
 			plt.plot(x,cdf_x,label=lab)
+
 		x,cdf_x = get_cdf_xy(aspl_arr)
 		plt.plot(x,cdf_x,label='Destinations')
+
+		x,cdf_x = get_cdf_xy(aspl_by_as_med)
+		plt.plot(x,cdf_x,label="ASes")
+
+		x,cdf_x = get_cdf_xy(list(aspls_whole_internet.values()))
+		plt.plot(x,cdf_x,label="Whole Internet")
+
 		plt.grid(True)
 		plt.xlabel("AS Path Length")
 		plt.ylabel("CDF of Destinations/Traffic")
@@ -425,8 +504,8 @@ class Campus_Measurement_Analyzer:
 				download_file_by_id(gdrive, fn['id'], out_fn)
 
 	def run(self):
-		self.sync_results()
-		self.parse_ping_result_set()
+		# self.sync_results()
+		# self.parse_ping_result_set()
 		self.parse_trace_result_set()
 
 

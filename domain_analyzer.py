@@ -67,7 +67,7 @@ class Domain_Analyzer():
 		with open(os.path.join(CACHE_DIR, 'services_bytes.txt'),'w') as f:
 			for service,domainsvols in sorted(kw_mappings.items(), key = lambda el : -1 * sum([ell[1] for ell in el[1]])):
 				this_service_bytes = sum(vol for domain,vol in domainsvols)
-				domain_str = "---".join([domain for domain,vol in domainsvols])
+				domain_str = ";".join([domain for domain,vol in domainsvols])
 				f.write("{},{},{}\n".format(service,this_service_bytes,domain_str))
 		with open(os.path.join(CACHE_DIR, 'unmapped_domains.txt'),'w') as f:
 			for domain,nb in sorted(dump_list, key = lambda el : -1 * el[1]):
@@ -203,7 +203,7 @@ class Domain_Analyzer():
 					print("{} -- {} {}".format(i,all_services[i],round(domains_arr[divideri,i]*100.0/max_n,4)))
 
 
-			fig, axs = plt.subplots(n_dividers, n_dividers, figsize=(10, 12))
+			fig, axs = plt.subplots(n_dividers, n_dividers, figsize=(10, 10))
 			dist_mat = np.zeros((n_dividers,n_dividers))
 			from sympy.combinatorics.permutations import Permutation
 			for divideri in tqdm.tqdm(range(n_dividers),desc="Calculating distances..."):
@@ -266,4 +266,5 @@ if __name__ == "__main__":
 	ax_labs = ['Rank-Biased Overlap', 'Spearman Correlation', 'Cosine Similarity',
 		'Weighted Jaccard Index', 'Jaccard Index', 'Euclidean Distance']
 	for metric,lab,axis_lab in zip(metrics,labs,ax_labs):
+		if lab != 'spearman': continue
 		da.compare_building_domains(metric, n_doms=1000, plt_lab=lab, axis_lab=axis_lab)

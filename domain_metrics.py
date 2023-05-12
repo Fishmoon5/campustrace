@@ -44,8 +44,6 @@ def euclidean(arr1, arr2, **kwargs):
 	d = 1 - d
 	return d				
 
-
-### WRONG
 def spearman(arr1, arr2, **kwargs):
 	ranked_domsi = ss.rankdata(arr1)
 	ranked_domsj = ss.rankdata(arr2)
