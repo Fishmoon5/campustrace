@@ -1,4 +1,6 @@
-import os, time, json, glob, numpy as np
+import os, time, json, glob, numpy as np, tqdm
+from helpers import *
+
 from subprocess import call,check_output
 from constants import *
 
@@ -53,7 +55,11 @@ class Traceroute_Conductor:
 		self.targets = {}
 		for row in open(self.targets_fn):
 			if row.strip() == "": continue
-			ip,nbytes = row.strip().split(',')
+			try:
+				ip,nbytes = row.strip().split(',')
+			except ValueError:
+				ip = row.strip()
+				nbytes = 1
 			self.targets[ip] = float(nbytes)
 
 	def find_traceroute_targets(self):
@@ -63,40 +69,50 @@ class Traceroute_Conductor:
 			pfx,pfx_len,asn = row.strip().split('\t')
 			targ_to_probe = ".".join(pfx.split('.')[0:3]) + ".1"
 			targs[targ_to_probe] = None
-		self.targets = list(targs)[0:10000]
+		self.targets = list(targs)
 		if not os.path.exists(outdir):
 			call("mkdir {}".format(outdir), shell=True)
 		outfn = os.path.join(outdir, 'all_prefixes_response.warts')
-		self._traceroute(outfn)
+		# self._traceroute(outfn)
+		
 		warts_out_fns = glob.glob(os.path.join(outdir, "*.warts*"))
-		from analyze_results import Campus_Measurement_Analyzer
-
+		from traceroute_analyzer import Campus_Measurement_Analyzer
 		cma = Campus_Measurement_Analyzer()
 		cma.load_traceroute_helpers()
 
-		all_ips = []
-		for waf in warts_out_fns:
-			cmd = "sc_warts2json {}".format(waf)
-			json_from_warts_out_str = check_output(cmd, shell=True).decode()
-			meas_objs = []
-			for meas_str in json_from_warts_out_str.split('\n'):
-				if meas_str == "": continue
-				measurement_obj = json.loads(meas_str)
-				if measurement_obj['type'] != 'trace': continue
-				all_ips = all_ips + cma.parse_ripe_trace_result(measurement_obj, ret_ips=True)
-		cma.lookup_asns_if_needed(list(set(all_ips)))
+		all_ips_sets = []
+		# for waf in warts_out_fns:
+		# 	cmd = "sc_warts2json {}".format(waf)
+		# 	json_from_warts_out_str = check_output(cmd, shell=True).decode()
+		# 	meas_objs = []
+		# 	print("Parsing warts file {}".format(waf))
+		# 	for meas_str in tqdm.tqdm(json_from_warts_out_str.split('\n')):
+		# 		if meas_str == "": continue
+		# 		measurement_obj = json.loads(meas_str)
+		# 		if measurement_obj['type'] != 'trace': continue
+		# 		all_ips_sets.append(cma.parse_ripe_trace_result(measurement_obj, ret_ips=True))
+		# all_ips = [ip32_to_24(ip) for ip_set in all_ips_sets for ip in ip_set]
+		# cma.lookup_asns_if_needed(list(set(all_ips)))
 		good_targets = {}
 		for waf in warts_out_fns:
 			cmd = "sc_warts2json {}".format(waf)
 			json_from_warts_out_str = check_output(cmd, shell=True).decode()
 			meas_objs = []
-			for meas_str in json_from_warts_out_str.split('\n'):
+			print("Parsing warts file {}".format(waf))
+			for meas_str in tqdm.tqdm(json_from_warts_out_str.split('\n')):
 				if meas_str == "": continue
 				measurement_obj = json.loads(meas_str)
 				if measurement_obj['type'] != 'trace': continue
 				parsed_obj = cma.parse_ripe_trace_result(measurement_obj)
 				if parsed_obj['reached_dst_network']:
 					good_targets[parsed_obj['dst']] = None
+				# else:
+				# 	print(parsed_obj)
+				# 	dst = parsed_obj['dst']
+				# 	print(cma.parse_asn(dst))
+				# 	cma.parse_ripe_trace_result(measurement_obj,verb=True)
+				# 	print(cma.routeviews_pref_to_asn.get(dst + '/32'))
+				# 	if np.random.random() > .99:exit(0)
 		with open(os.path.join(DATA_DIR, 'whole_ipspace_traceroute_targets.txt'),'w') as f:
 			for good_target in good_targets:
 				f.write("{}\n".format(good_target))
@@ -106,6 +122,7 @@ class Traceroute_Conductor:
 		self.load_targets()
 
 		msmt_fn = {
+			'traces-all': self._traceroute,
 			'traces': self._traceroute,
 			'pings': self._ping,
 		}[msmt_type]
@@ -135,5 +152,6 @@ class Traceroute_Conductor:
 		return out_fns
 
 if __name__ == "__main__":
+	np.random.seed(31415)
 	tc = Traceroute_Conductor("")
 	tc.find_traceroute_targets()
