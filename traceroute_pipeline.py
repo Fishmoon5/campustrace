@@ -16,10 +16,18 @@ def run_pipeline():
 	with open(targets_fn, 'w') as f:
 		for t in ip_addrs:
 			f.write("{},{}\n".format(t, ip_addrs[t]))
+
+	all_targets_fn = os.path.join(DATA_DIR, 'whole_ipspace_traceroute_targets.txt')
+
 	
-	for msmt_type in ['traces','pings']:
+	for msmt_type in ['traces-all', 'traces','pings']:
 		print("Running measurement type {}".format(msmt_type))
-		tc = Traceroute_Conductor(targets_fn)
+
+		if msmt_type == 'traces-all':
+			fn = all_targets_fn
+		else:
+			fn = targets_fn
+		tc = Traceroute_Conductor(fn)
 		out_fns = tc.run(msmt_type)
 		for out_fn in out_fns:
 			for _try in range(10):
@@ -34,6 +42,8 @@ def run_pipeline():
 		out_dir = "/".join(out_fns[0].split("/")[0:-1])
 
 		call("rm -rf {}".format(out_dir), shell=True)
+		break
+	call("rm {}".format(targets_fn),shell=True)
 
 if __name__ == "__main__":
 	run_pipeline()

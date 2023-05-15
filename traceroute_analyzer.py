@@ -146,13 +146,15 @@ class Campus_Measurement_Analyzer:
 			for row in f:
 				pref,l,asn = row.decode().strip().split('\t')
 				asns = asn.split(",")
+
 				for asn in asns:
 					asn = self.parse_asn(asn)
 					try:
 						self.routeviews_asn_to_pref[asn].append(pref + "/" + l)
 					except KeyError:
 						self.routeviews_asn_to_pref[asn] = [pref + "/" + l]
-					self.routeviews_pref_to_asn[pref] = asn
+					self.routeviews_pref_to_asn[pref + "/" + l] = asn
+
 
 		self.routeviews_pref_to_asn['199.109.0.0/16'] = self.parse_asn(3754)
 
@@ -201,7 +203,7 @@ class Campus_Measurement_Analyzer:
 			self.ip_to_asn[k] = v
 		self.save_ip_to_asn()	
 
-	def parse_ripe_trace_result(self, result, ret_ips=False):
+	def parse_ripe_trace_result(self, result, ret_ips=False, verb=False):
 		"""Parse traceroute measurement result from RIPE Atlas into a nice form."""
 		src,dst = result['src'], result['dst']
 		if src == "" or dst == "": return None
@@ -232,8 +234,6 @@ class Campus_Measurement_Analyzer:
 		if src not in set(raw_ripe_paths[0]):
 			raw_ripe_paths = [[src]] + raw_ripe_paths
 			hop_rtts = [[0]] + hop_rtts
-
-		
 
 		every_ip = list(set([ip for hop_set in raw_ripe_paths for ip in hop_set])) + [dst]
 		if ret_ips: return every_ip
@@ -504,7 +504,7 @@ class Campus_Measurement_Analyzer:
 				download_file_by_id(gdrive, fn['id'], out_fn)
 
 	def run(self):
-		# self.sync_results()
+		self.sync_results()
 		# self.parse_ping_result_set()
 		self.parse_trace_result_set()
 
