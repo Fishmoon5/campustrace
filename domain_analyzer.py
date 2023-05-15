@@ -196,11 +196,11 @@ class Domain_Analyzer():
 			else:
 				interesting_prints = list(range(n_dividers))
 
-			for divideri in interesting_prints:
-				max_n = np.max(domains_arr[divideri,:])
-				print("Divider {}".format(divideri))
-				for i in np.argsort(domains_arr[divideri,:])[::-1][0:15]:
-					print("{} -- {} {}".format(i,all_services[i],round(domains_arr[divideri,i]*100.0/max_n,4)))
+			# for divideri in interesting_prints:
+			# 	max_n = np.max(domains_arr[divideri,:])
+			# 	print("Divider {}".format(divideri))
+			# 	for i in np.argsort(domains_arr[divideri,:])[::-1][0:15]:
+			# 		print("{} -- {} {}".format(i,all_services[i],round(domains_arr[divideri,i]*100.0/max_n,4)))
 
 
 			fig, axs = plt.subplots(n_dividers, n_dividers, figsize=(10, 10))
@@ -214,13 +214,15 @@ class Domain_Analyzer():
 
 					dist_mat[divideri,dividerj] = d
 					dist_mat[dividerj,divideri] = d
-			print(np.min(dist_mat.flatten()))
-			print(np.max(dist_mat.flatten()))
+
 			dist_mat = dist_mat - np.min(dist_mat.flatten())
 			dist_mat = dist_mat / np.max(dist_mat.flatten())
-			for divideri in range(n_dividers):
-				for dividerj in range(n_dividers):
-					axs[divideri, dividerj].imshow(np.array([[dist_mat[divideri,dividerj]]]), cmap='cool', vmin=0, vmax=1)
+
+			dmat_sum = np.sum(dist_mat, axis=0)
+			for divideri in np.argsort(dmat_sum):
+				for dividerj in np.argsort(dmat_sum):
+					axs[divideri, dividerj].imshow(np.array([[dist_mat[divideri,dividerj]]]), 
+						cmap='coolwarm', vmin=0, vmax=1)
 					# axs[divideri, dividerj].axis('off')
 					axs[divideri, dividerj].set_xticks([])
 					axs[divideri, dividerj].set_yticks([])
@@ -232,19 +234,20 @@ class Domain_Analyzer():
 				else:
 					return in_order_dividers['category'][divideri]
 
-			for divideri in range(n_dividers):
-				axs[0,divideri].set_title(divideri_to_lab(divideri), rotation=45)
-			for divideri in range(n_dividers):
-				axs[divideri,0].set_ylabel(divideri_to_lab(divideri), rotation=45)
+			print(np.argsort(dmat_sum))
+			for i,divideri in enumerate(np.argsort(dmat_sum)):
+				axs[0,i].set_title(divideri_to_lab(divideri), rotation=45)
+			for i,divideri in enumerate(np.argsort(dmat_sum)):
+				axs[i,0].set_ylabel(divideri_to_lab(divideri), rotation=45)
 
-			print(divider_to_i)
-			print(dist_mat.round(2))
+			# print(dist_mat.round(2))
 			# Add colorbar
 			norm = plt.Normalize(0, 1)
-			cmap = plt.get_cmap('cool')
-			cax = fig.add_axes([0.93, 0.1, 0.02, 0.8])
+			cmap = plt.get_cmap('coolwarm')
+			cax = fig.add_axes([0.91, 0.1, 0.02, 0.8])
 			cb = fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), cax=cax)
 			cb.ax.set_ylabel(kwargs.get('axis_lab'), fontsize=20)
+			fig.subplots_adjust(right=.85)
 			
 			# Adjust spacing and show plot
 			# fig.text(0.5, 0.05, 'Differences between top %d owners in dividers'%(ntop), ha='center', fontsize=12)
@@ -266,5 +269,7 @@ if __name__ == "__main__":
 	ax_labs = ['Rank-Biased Overlap', 'Spearman Correlation', 'Cosine Similarity',
 		'Weighted Jaccard Index', 'Jaccard Index', 'Euclidean Distance']
 	for metric,lab,axis_lab in zip(metrics,labs,ax_labs):
-		if lab != 'spearman': continue
+		print("\n\n\nCOMPUTING METRIC {}\n\n\n".format(lab))
 		da.compare_building_domains(metric, n_doms=1000, plt_lab=lab, axis_lab=axis_lab)
+
+

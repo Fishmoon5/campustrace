@@ -461,9 +461,11 @@ class Campus_Measurement_Analyzer:
 				aspl_by_as[asn].append(aspls[t])
 			except KeyError:
 				aspl_by_as[asn] = [aspls[t]]
-		aspl_by_as_max = [np.max(as_aspls) for as_aspls in aspl_by_as.values()]
-		aspl_by_as_min = [np.min(as_aspls) for as_aspls in aspl_by_as.values()]
+		# aspl_by_as_max = [np.max(as_aspls) for as_aspls in aspl_by_as.values()]
+		# aspl_by_as_min = [np.min(as_aspls) for as_aspls in aspl_by_as.values()]
 		aspl_by_as_med = [np.median(as_aspls) for as_aspls in aspl_by_as.values()]
+
+		fig, ax = plt.subplots(1, 2, figsize=(14,7))
 
 		aspl_arr = [aspls[targ] for targ in targs_of_interest]
 		for k, lab in zip(['out', 'total', 'in'], 
@@ -476,21 +478,40 @@ class Campus_Measurement_Analyzer:
 			print(sorted_arr[0:30])
 
 			x,cdf_x = get_cdf_xy(aspl_arr_wtd, weighted=True)
-			plt.plot(x,cdf_x,label=lab)
+			ax[0].plot(x,cdf_x,label=lab)
 
 		x,cdf_x = get_cdf_xy(aspl_arr)
-		plt.plot(x,cdf_x,label='Destinations')
+		ax[0].plot(x,cdf_x,label='Destinations')
 
 		x,cdf_x = get_cdf_xy(aspl_by_as_med)
-		plt.plot(x,cdf_x,label="ASes")
+		ax[1].plot(x,cdf_x,label="Campus Traffic Targets")
 
 		x,cdf_x = get_cdf_xy(list(aspls_whole_internet.values()))
-		plt.plot(x,cdf_x,label="Whole Internet")
+		ax[0].plot(x,cdf_x,label="Whole Internet")
 
-		plt.grid(True)
-		plt.xlabel("AS Path Length")
-		plt.ylabel("CDF of Destinations/Traffic")
-		plt.legend()
+		## Get ASPL by AS for whole internet
+		aspl_by_as_whole_internet = {}
+		for t in aspls_whole_internet:
+			asn = self.parse_asn(t)
+			if asn is None: continue
+			try:
+				aspl_by_as_whole_internet[asn].append(aspls_whole_internet[t])
+			except KeyError:
+				aspl_by_as_whole_internet[asn] = [aspls_whole_internet[t]]
+		aspl_by_as_whole_internet_med = [np.median(as_aspls) for as_aspls in aspl_by_as_whole_internet.values()]
+		x,cdf_x = get_cdf_xy(aspl_by_as_whole_internet_med)
+		ax[1].plot(x,cdf_x,label="Whole Internet")
+
+		ax[0].grid(True)
+		ax[1].grid(True)
+		ax[0].set_xlabel("AS Path Length")
+		ax[1].set_xlabel("AS Path Length")
+		ax[0].set_xlim([2,8])
+		ax[1].set_xlim([2,8])
+		ax[0].set_ylabel("CDF of Destinations/Traffic")
+		ax[1].set_ylabel("CDF of ASes")
+		ax[0].legend()
+		ax[1].legend()
 		plt.savefig('figures/all_aspls.pdf')
 
 	def sync_results(self):

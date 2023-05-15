@@ -202,8 +202,7 @@ class Service_Mapper():
 		print("{} percent of bytes mapped".format(round(mapped_bytes * 100.0 / total_b)))
 
 
-
-	def test(self):
+	def fetch_domains(self):
 		try:
 			self.get_selenium_driver()
 			for site in self.sites:
@@ -229,8 +228,8 @@ class Service_Mapper():
 
 if __name__ == "__main__":
 	sm = Service_Mapper()
-	# sm.test()
-	sm.compute_domains_to_services()
+	sm.fetch_domains()
+	# sm.compute_domains_to_services()
 
 
 
