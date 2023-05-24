@@ -68,3 +68,7 @@ def rbo_wrap(arr1, arr2, **kwargs):
 	d = rbo.RankingSimilarity(top_n_domsi, top_n_domsj).rbo_wtd(wts=wts)
 
 	return d
+
+def pdf_distance(p,q,**kwargs):
+	bc = np.sum(np.sqrt(p*q))
+	return 1 - (-1 * np.log(bc))
