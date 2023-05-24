@@ -9,6 +9,18 @@ from constants import *
 ### so some of them might be irrelevant.
 
 
+def domain_to_domainstr(s):
+	if s.startswith("https://"):
+		s = s[len("https://"):]
+	s = s.split("/")[0]
+	domain_els = s.split(".")
+	if len(domain_els) > 3:
+		significant_domain_els = domain_els[-3:]
+		domain_str = ".".join(significant_domain_els)
+	else:
+		domain_str = s
+	return domain_str
+
 def fe_to_pop_converter(fe_to_loc, threshold = 150):
 	clusters = {}
 
