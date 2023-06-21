@@ -31,7 +31,7 @@ class Service_Demographic_Comparison():
 			global_average = np.mean(self.domains_arr,axis=0).reshape(1,-1)
 
 			for nuniti in tqdm.tqdm(range(1,nunits),
-				desc="Predicting hours from hours."):
+				desc="Predicting days from days."):
 				these_errs = []
 				allunits = np.arange(nunits)
 				sampled_already = {}
@@ -49,10 +49,6 @@ class Service_Demographic_Comparison():
 					notunitset = get_difference(allunits, unitset)
 
 					pred = np.mean(self.domains_arr[np.array(unitset),:],axis=0).reshape(1,-1)
-					# errs = self.domains_arr[np.array(notunitset),:] - pred
-					# total_err = np.sum(np.abs(errs.flatten())) / len(notunitset)
-					# errs = pred - global_average
-					# total_err = np.sum(np.abs(errs.flatten()))
 					total_err = 1 - pdf_distance(pred,global_average)
 					these_errs.append(total_err)
 				errs_over_n_sim[nuniti] = these_errs
@@ -85,10 +81,10 @@ class Service_Demographic_Comparison():
 		ax.fill_between(np.arange(1,nunits), (plt_arr['med'] - plt_arr['std'])/overall_max,
 			(plt_arr['med'] + plt_arr['std']) / overall_max, alpha=.3, color='red')
 		ax.grid(True)
-		ax.set_xlabel("Number of Hours for Comparison",fontsize=20)
-		ax.set_ylabel("Normalized Median Comparison Error",fontsize=20)
+		ax.set_xlabel("Days for Comparison",fontsize=20)
+		ax.set_ylabel("Normalized Median\nBhattacharyyar Distance",fontsize=20)
 		ax.set_ylim([0,1.0])
-		plt.savefig("figures/hour_representativeness.pdf")
+		plt.savefig("figures/day_representativeness.pdf")
 
 	def unit_representativity(self):
 		np.random.seed(31415)
@@ -106,36 +102,28 @@ class Service_Demographic_Comparison():
 			### Q: let x = global service average
 			## how does err(mean[included_set] - x) vary as we include more in the set?
 
-			nsim_atmost = 15
-			errs_over_n_sim = {}
-			global_average = np.mean(self.domains_arr,axis=0).reshape(1,-1)
+			nsim_atmost = 200
+			errs_over_n_sim = np.zeros((nsim_atmost,nunits-1))
+			for i in range(nsim_atmost):
+				ordering = np.arange(nunits)
+				np.random.shuffle(ordering)
+				current_average = self.domains_arr[ordering[0],:]
+				current_sum = self.domains_arr[ordering[0],:]
+				next_sum = current_sum.copy()
+				next_average = current_average.copy()
+				for j in range(nunits-1):
+					next_unit = ordering[j+1]
 
-			for nuniti in tqdm.tqdm(range(1,nunits),
-				desc="Predicting units from units."):
-				these_errs = []
-				allunits = np.arange(nunits)
-				sampled_already = {}
+					next_sum += self.domains_arr[next_unit,:]
+					next_average = next_sum / np.sum(next_sum)
+					errs_over_n_sim[i,j] = 1-pdf_distance(current_average, next_average)
 
-				for iteri in range(nsim_atmost):
-					success = False
-					while not success:
-						unitset = sorted(random.sample(list(allunits), nuniti))
-						try:
-							sampled_already[tuple(unitset)]
-						except KeyError:
-							sampled_already[tuple(unitset)] = True
-							success = True
+					current_sum = next_sum.copy()
+					current_average = next_average.copy()
+					# print(current_average[0:10])
 
-					notunitset = get_difference(allunits, unitset)
+			print(errs_over_n_sim)
 
-					pred = np.mean(self.domains_arr[np.array(unitset),:],axis=0).reshape(1,-1)
-					# errs = self.domains_arr[np.array(notunitset),:] - pred
-					# total_err = np.sum(np.abs(errs.flatten())) / len(notunitset)
-					# errs = pred - global_average
-					# total_err = np.sum(np.abs(errs.flatten()))
-					total_err = pdf_distance(pred,global_average)
-					these_errs.append(total_err)
-				errs_over_n_sim[nuniti] = these_errs
 			pickle.dump({
 				'errs_over_n_sim': errs_over_n_sim,
 				'nunits':nunits,
@@ -147,12 +135,10 @@ class Service_Demographic_Comparison():
 
 
 		plt_arr = {k: np.zeros(nunits-1) for k in ['min','med','max', 'std']}
-		for nuniti in range(1,nunits):
-			## min, med, max
-			plt_arr['min'][nuniti-1] = np.min(errs_over_n_sim[nuniti])
-			plt_arr['med'][nuniti-1] = np.median(errs_over_n_sim[nuniti])
-			plt_arr['max'][nuniti-1] = np.max(errs_over_n_sim[nuniti])
-			plt_arr['std'][nuniti-1] = np.sqrt(np.var(errs_over_n_sim[nuniti]))
+		plt_arr['min'] = np.min(errs_over_n_sim, axis=0)
+		plt_arr['med'] = np.median(errs_over_n_sim,axis=0)
+		plt_arr['max'] = np.max(errs_over_n_sim,axis=0)
+		plt_arr['std'] = np.std(errs_over_n_sim,axis=0)
 
 		overall_max = np.max(plt_arr['max'])
 
@@ -165,10 +151,103 @@ class Service_Demographic_Comparison():
 		ax.fill_between(np.arange(1,nunits), (plt_arr['med'] - plt_arr['std'])/overall_max,
 			(plt_arr['med'] + plt_arr['std']) / overall_max, alpha=.3, color='red')
 		ax.grid(True)
-		ax.set_xlabel("Number of Buildings for Comparison",fontsize=20)
-		ax.set_ylabel("Normalized Median Comparison Error",fontsize=20)
+		ax.set_xlabel("Buildings Averaged Over",fontsize=20)
+		ax.set_ylabel("Normalized Median\nBhattacharyyar Distance",fontsize=20)
 		ax.set_ylim([0,1.0])
 		plt.savefig("figures/building_representativeness.pdf")
+
+	def setup_activity_comparison_data(self):
+		### Want to build separator by activity measure
+		### i.e., DNS -> dns requests corresponding to service for each service
+		sm = Service_Mapper()
+		self.activity_by_service = sm.get_service_activity_measure_dists()
+
+		self.all_services = list(set(service for unit,services in self.activity_by_service.items()
+			 for service in services))
+
+
+		self.units = sorted(list(self.activity_by_service))
+		print(self.units)
+
+		self.in_order_dividers = {
+			'activity_measure': self.units,
+		}
+
+	def compare_activity_measures(self, metric, **kwargs):
+		self.setup_activity_comparison_data()
+		divider_type = 'activity_measure'
+
+		print("\n\n-----DIVIDING BY TYPE {}------".format(divider_type))
+
+		service_bytes_by_divider = self.activity_by_service
+		self.service_bytes_by_divider = service_bytes_by_divider
+		dist_mat = self.get_dist_mat(divider_type, metric, **kwargs)
+		dmat_sum = np.sum(dist_mat, axis=0)
+		
+		cats = ['Bytes', "DNS\nResponses", 'Flows', "Flow\nDuration"]
+		
+
+		import matplotlib
+		matplotlib.rcParams.update({'font.size': 18})
+		import matplotlib.pyplot as plt
+		f,ax = plt.subplots(1,1)
+		f.set_size_inches(12,6)
+		linestyles=['-', '-.', ':','--']
+
+		for lab in ['Flows','Flow\nDuration','DNS\nResponses','Bytes']:
+			divideri = np.where(np.array(cats)==lab)[0][0]
+			ax.semilogx(self.domains_arr[divideri,0:1000]*100.0,
+				label=cats[divideri],linestyle=linestyles[divideri])
+		ax.legend()
+		ax.set_xlabel("Rank by Traffic Volume")
+		ax.set_ylabel("Percent of Total Activity")
+		ax.set_xticks([1,10,100,1000])
+		ax.set_xticklabels(['1','10','100','1000'])
+		plt.savefig('figures/activity_measures_topn.pdf')
+		plt.clf(); plt.close()
+
+
+
+		n_dividers = len(self.service_bytes_by_divider)
+		fig, axs = plt.subplots(n_dividers, n_dividers, figsize=(13, 10))
+		sorted_rows = list(reversed(np.argsort(dmat_sum)))
+		for divideri in range(n_dividers):
+			for dividerj in range(n_dividers):
+
+				axs[divideri, dividerj].imshow(np.array([[dist_mat[sorted_rows[divideri],
+					sorted_rows[dividerj]]]]), 
+					cmap='coolwarm', vmin=0, vmax=1)
+				# axs[divideri, dividerj].axis('off')
+				axs[divideri, dividerj].set_xticks([])
+				axs[divideri, dividerj].set_yticks([])
+				axs[divideri, dividerj].set_aspect('equal')
+
+		def divideri_to_lab(divideri):
+			return cats[divideri]
+
+		for i,divideri in enumerate(sorted_rows):
+			axs[0,i].set_xlabel(divideri_to_lab(divideri), rotation=45, fontsize=18)
+			axs[0,i].xaxis.set_label_position('top')
+			axs[0,i].xaxis.set_label_coords(.5, 1)
+		for i,divideri in enumerate(sorted_rows):
+			axs[i,0].set_ylabel(divideri_to_lab(divideri), rotation=45, fontsize=18)
+			axs[i,0].yaxis.set_label_coords(-.25, .2)
+
+		# print(dist_mat.round(2))
+		# Add colorbar
+		norm = plt.Normalize(0, 1)
+		cmap = plt.get_cmap('coolwarm')
+		cax = fig.add_axes([0.91, 0.1, 0.02, 0.8])
+		cb = fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), cax=cax)
+		cb.ax.set_ylabel(kwargs.get('axis_lab'), fontsize=20)
+		fig.subplots_adjust(right=.90)
+		
+		# Adjust spacing and show plot
+		plt.subplots_adjust(wspace=-.5, hspace=-.05)
+		# plt.show()
+		plt.savefig('figures/similarities_across_{}-{}.pdf'.format(
+			divider_type, kwargs.get('plt_lab','')))
+		plt.clf(); plt.close()
 
 
 	def setup_service_by_unit_data(self):
@@ -255,15 +334,15 @@ class Service_Demographic_Comparison():
 
 		if divider_type == 'building':
 			interesting_prints = []
-		elif divider_type == 'category':
+		elif divider_type in ['category','activity_measure']:
 			interesting_prints = list(range(n_dividers))
 		else:
 			interesting_prints = []
 
 		for divideri in interesting_prints:
-			max_n = np.max(self.domains_arr[divideri,:])
-			print("Divider {}".format(divideri))
-			for i in np.argsort(self.domains_arr[divideri,:])[::-1][0:15]:
+			max_n = np.sum(self.domains_arr[divideri,:])
+			print("Divider {}".format(self.in_order_dividers[divider_type][divideri]))
+			for i in np.argsort(self.domains_arr[divideri,:])[::-1][0:25]:
 				print("{} -- {} {}".format(i,self.all_services[i],round(self.domains_arr[divideri,i]*100.0/max_n,4)))
 
 
@@ -304,7 +383,7 @@ class Service_Demographic_Comparison():
 		    "128.59.122.128", "160.39.21.128", "160.39.22.0", "160.39.38.128", # postdocs, faculty and staff
 		    "160.39.22.128" # faculty and staff
 		]
-		ncats,cats = [10,1,3,4,1],['grad','undergrad','grad\nfacstaff','pdocs\nfacstaff','facstaff']
+		ncats,cats = [10,1,3,4,1],['grad','undergrad','gradfacstaff','pdocsfacstaff','facstaff']
 		cats = [c for i,c in enumerate(cats) for n in range(ncats[i]) ]
 		building_subnets = [b for b in all_building_subnets if b in self.service_bytes_by_building]
 		self.cats = [c for c,b in zip(cats,all_building_subnets) if b in self.service_bytes_by_building]
@@ -312,11 +391,11 @@ class Service_Demographic_Comparison():
 
 		self.in_order_dividers = {
 			'building': building_subnets,
-			'category': ['grad','grad\nfacstaff','pdocs\nfacstaff','facstaff','global']
+			'category': ['grad','gradfacstaff','pdocsfacstaff','facstaff','all traffic']
 		}
 
 		## aggregate to pseudo buildings, with each category being a building
-		self.service_bytes_by_category = {'global': {}}
+		self.service_bytes_by_category = {'all traffic': {}}
 		for bsnet,cat in zip(building_subnets,self.cats):
 			try:
 				self.service_bytes_by_category[cat]
@@ -328,10 +407,16 @@ class Service_Demographic_Comparison():
 					self.service_bytes_by_category[cat][service] += nb
 				except KeyError:
 					self.service_bytes_by_category[cat][service] = nb
+		for cat in self.service_bytes_by_category:
+			total_n_b = sum(list(self.service_bytes_by_category[cat].values()))
+			for s in self.service_bytes_by_category[cat]:
+				self.service_bytes_by_category[cat][s] = self.service_bytes_by_category[cat][s] / total_n_b
+		for cat in self.service_bytes_by_category:
+			for service,nb in self.service_bytes_by_category[cat].items():
 				try:
-					self.service_bytes_by_category['global'][service] += nb
+					self.service_bytes_by_category['all traffic'][service] += nb
 				except KeyError:
-					self.service_bytes_by_category['global'][service] = nb
+					self.service_bytes_by_category['all traffic'][service] = nb
 
 
 	def compare_building_domains(self, metric, **kwargs):
@@ -365,12 +450,24 @@ class Service_Demographic_Comparison():
 				if divider_type == 'building':
 					return self.cats[divideri]
 				else:
-					return self.in_order_dividers['category'][divideri]
+
+					category = self.in_order_dividers['category'][divideri]
+					category_to_plot_label = {
+						'grad': "Graduate",
+						'all traffic': "All Traffic",
+						'pdocsfacstaff': "Post-Docs &\nFaculty",
+						'gradfacstaff': "Graduate &\nFaculty",
+						'facstaff': "Faculty",
+					}
+					return category_to_plot_label[category]
 
 			for i,divideri in enumerate(sorted_rows):
-				axs[0,i].set_title(divideri_to_lab(divideri), rotation=45, fontsize=18)
+				axs[0,i].set_xlabel(divideri_to_lab(divideri), rotation=45, fontsize=18)
+				axs[0,i].xaxis.set_label_position('top')
+				axs[0,i].xaxis.set_label_coords(.5, .9)
 			for i,divideri in enumerate(sorted_rows):
 				axs[i,0].set_ylabel(divideri_to_lab(divideri), rotation=45, fontsize=18)
+				axs[i,0].yaxis.set_label_coords(-.25, .2)
 
 			# print(dist_mat.round(2))
 			# Add colorbar
@@ -382,9 +479,7 @@ class Service_Demographic_Comparison():
 			fig.subplots_adjust(right=.85)
 			
 			# Adjust spacing and show plot
-			# fig.text(0.5, 0.05, 'Differences between top %d owners in dividers'%(ntop), ha='center', fontsize=12)
-			# fig.text(0.07, 0.5, 'Differences between top %d owners in dividers'%(ntop), va='center', rotation='vertical', fontsize=12)
-			plt.subplots_adjust(wspace=0, hspace=0)
+			plt.subplots_adjust(wspace=0, hspace=-.2)
 			# plt.show()
 			plt.savefig('figures/similarities_across_{}-{}.pdf'.format(
 				divider_type, kwargs.get('plt_lab','')))
@@ -397,13 +492,14 @@ class Service_Demographic_Comparison():
 			 'Jaccard Index']
 		for metric,lab,axis_lab in zip(metrics,labs,ax_labs):
 			print("\n\n\nCOMPUTING METRIC {}\n\n\n".format(lab))
-			self.compare_building_domains(metric, n_doms=1000, plt_lab=lab, axis_lab=axis_lab)
+			# self.compare_building_domains(metric, n_doms=1000, plt_lab=lab, axis_lab=axis_lab)
+			self.compare_activity_measures(metric, plt_lab=lab, axis_lab=axis_lab)
 			exit(0)
 
 
 if __name__ == "__main__":
 	sdc = Service_Demographic_Comparison()
 	# sdc.unit_representativity()
-	# sdc.temporal_representativity()
-	sdc.crosswise_comparisons()
+	sdc.temporal_representativity()
+	# sdc.crosswise_comparisons()
 

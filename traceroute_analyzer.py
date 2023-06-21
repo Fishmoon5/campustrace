@@ -275,30 +275,84 @@ class Campus_Measurement_Analyzer:
 		# self.load_traceroute_helpers()
 		# self.load_target_data()
 
-		targ_to_rtt =  {}
+		rtts_cache_fn = os.path.join(CACHE_DIR, 'rtts.pkl')
+		if not os.path.exists(rtts_cache_fn):
+			targ_to_rtt =  {}
+			times_of_interest = ['1684980072']
+			all_ping_files = glob.glob(os.path.join(MEASUREMENT_DIR, 'pings-*.json'))
+			all_ping_files = [ping_file for ping_file in all_ping_files if any(toi in ping_file for toi in times_of_interest)]
 
-		times_of_interest = ['1683686967']
-		all_ping_files = glob.glob(os.path.join(MEASUREMENT_DIR, 'pings-*.json'))
-		all_ping_files = [ping_file for ping_file in all_ping_files if any(toi in ping_file for toi in times_of_interest)]
+			for result_fn in tqdm.tqdm(all_ping_files,
+				desc="Parsing RTT measurements."):
+				these_results = json.load(open(result_fn,'r'))
+				for result in these_results:
+					if result['type'] != 'ping': continue
+					for p in result['responses']:
+						try:
+							targ_to_rtt[result['dst']].append(p['rtt'])
+						except KeyError:
+							targ_to_rtt[result['dst']] = [p['rtt']]
 
-		for result_fn in tqdm.tqdm(all_ping_files,
-			desc="Parsing RTT measurements."):
-			these_results = json.load(open(result_fn,'r'))
-			for result in these_results:
-				if result['type'] != 'ping': continue
-				for p in result['responses']:
-					try:
-						targ_to_rtt[result['dst']].append(p['rtt'])
-					except KeyError:
-						targ_to_rtt[result['dst']] = [p['rtt']]
+			for dst,lats in targ_to_rtt.items():
+				targ_to_rtt[dst] = {
+					'min': np.min(lats),
+					'mean': np.mean(lats),
+					'med': np.median(lats),
+				}
+			pickle.dump(targ_to_rtt, open(rtts_cache_fn,'wb'))
+		else:
+			targ_to_rtt = pickle.load(open(rtts_cache_fn,'rb'))
 
-		for dst,lats in targ_to_rtt.items():
-			targ_to_rtt[dst] = {
-				'min': np.min(lats),
-				'mean': np.mean(lats),
-				'med': np.median(lats),
-			}
-		pickle.dump(targ_to_rtt, open(os.path.join(CACHE_DIR, 'rtts.pkl'),'wb'))
+
+		d = pickle.load(open(os.path.join(CACHE_DIR, 'destinations_to_services.pkl'),'rb'))
+		dst_to_services_nb = d['dst_to_services_nb']
+		services_to_rtts_nb = {}
+		services_to_nb = {}
+		for dst in targ_to_rtt:
+			for service,nb in dst_to_services_nb.get(dst,{}).items():
+				app = (targ_to_rtt[dst]['min'], nb)
+				try:
+					services_to_rtts_nb[service].append(app)
+				except KeyError:
+					services_to_rtts_nb[service] = [app]
+				try:
+					services_to_nb[service] += nb
+				except KeyError:
+					services_to_nb[service] = nb
+
+		sorted_services = sorted(list(services_to_nb), key = lambda s : -1 * services_to_nb[s])
+
+
+		import matplotlib
+		matplotlib.rcParams.update({'font.size': 18})
+		import matplotlib.pyplot as plt
+		f,ax = plt.subplots(1,1)
+		f.set_size_inches(12,6)
+
+		services_to_rtts_avg = {}
+		services_to_vol = {}
+		for service, rttsnb in services_to_rtts_nb.items():
+			services_to_rtts_avg[service] = np.average([np.minimum(500,el[0]) for el in rttsnb], weights=[el[1] for el in rttsnb])
+			services_to_vol[service] = sum([el[1] for el in rttsnb])
+		for n in [50,100,1000,-1]:
+			services_to_rtts_avg_subset = list([services_to_rtts_avg[service] for service in sorted_services[0:n]])
+			x,cdf_x = get_cdf_xy(services_to_rtts_avg_subset,n_points=1000,logx=True)
+			labn = "Top {} Services".format(n) if n != -1 else "All Services"
+			ax.semilogx(x,cdf_x,label=labn)
+		x,cdf_x = get_cdf_xy(list(zip([services_to_rtts_avg[service] for service in sorted_services],
+			[services_to_vol[service] for service in sorted_services])), weighted=True, logx=True, n_points=1000)
+		ax.semilogx(x,cdf_x,label="All Traffic")
+		x,cdf_x = get_cdf_xy(list([el['min'] for el in targ_to_rtt.values()]))
+		ax.semilogx(x,cdf_x,label='All Destinations')
+		ax.set_ylabel("CDF of Services")
+		ax.set_xlabel("Average RTT (ms)")
+		ax.set_xlim([1,300])
+		ax.legend()
+
+		ax.grid(True)
+		ax.set_ylim([0,1.0])
+		plt.savefig('figures/service_locality.pdf')
+
 
 	def parse_trace_result_set(self):
 		cdf_aspl_cache_fn = os.path.join(CACHE_DIR, 'aspl_cdfs.pkl')
@@ -406,10 +460,12 @@ class Campus_Measurement_Analyzer:
 					'aspl_whole_internet':aspls_whole_internet,
 				}, open(os.path.join(CACHE_DIR, 'aspls.pkl'),'wb'))
 			else:
-				# asps, aspls, all_objs = pickle.load(open(all_data_cache_fn, 'rb'))
+				all_objs = pickle.load(open(all_data_cache_fn, 'rb'))
 				aspls_obj = pickle.load(open(os.path.join(CACHE_DIR, 'aspls.pkl'),'rb'))
 				aspls = aspls_obj['aspl_campus']
 				aspls_whole_internet = aspls_obj['aspl_whole_internet']
+				all_objs_campus = all_objs['all_objs_campus']
+
 
 
 			cdf_aspls = {}
@@ -477,6 +533,18 @@ class Campus_Measurement_Analyzer:
 				sorted_arr = sorted(aspl_arr_wtd_with_targs, key = lambda el : -1 * el[1])
 				print(lab)
 				print(sorted_arr[0:30])
+				
+
+				easier_format = {}
+				for aspl,val in aspl_arr_wtd:
+					try:
+						easier_format[aspl] += val
+					except KeyError:
+						easier_format[aspl] = val
+				vals = list(easier_format.keys())
+				wts = list([easier_format[aspl] for aspl in vals])
+				aspl_arr_wtd = list(zip(vals,wts))
+
 				x,cdf_x = get_cdf_xy(aspl_arr_wtd, weighted=True)
 				cdf_aspls[k] = (x,cdf_x)
 			
@@ -498,7 +566,7 @@ class Campus_Measurement_Analyzer:
 		every_other = 7
 		for k, lab in zip(['in', 'out', 'total','destinations','whole_internet'], 
 			["In Residential Traffic", 'Out Residential Traffic', 'Total Bytes',
-			'Residential Traffic Destinations', "All Routable Prefixes"]):
+			'Residential Traffic Remote Hosts', "All Routable Prefixes"]):
 			if k == 'total': continue
 			x,cdf_x = cdf_aspls[k]
 			ax.plot(x[::every_other],cdf_x[::every_other],label=lab,marker=MARKERSTYLES[i],
@@ -535,19 +603,281 @@ class Campus_Measurement_Analyzer:
 		plt.savefig('figures/all_aspls.pdf')
 
 
+	def aspl_from_bgp_routes(self):
+		np.random.seed(31415)
+		cdf_aspl_cache_fn = os.path.join(CACHE_DIR, 'aspl_cdfs_from_cu.pkl')
+		if not os.path.exists(cdf_aspl_cache_fn):
+			cache_fn = os.path.join(CACHE_DIR, 'aspls_all_objs_from_cu.pkl')
+			self.load_target_data()
+			self.load_traceroute_helpers()
+			if not os.path.exists(cache_fn):
+				import pytricia
+				as_paths_by_pref = pytricia.PyTricia()
+				pref = None
+				for row in tqdm.tqdm(open(os.path.join(DATA_DIR,'cu_bgp_routes.txt'),'r'),
+					desc="Parsing BGP table from CU"):
+					fields = [el for el in row.strip().split('  ') if el.strip() != ""]
+					if "/" in row:
+						pref = fields[1].strip()
+						prefl = pref.split('/')[1]
+					elif row.count(".") == 6:
+						pref = fields[1].strip()
+						if pref == "0.0.0.0": continue
+						pref = pref + "/" + prefl
+					if pref is None:
+						continue
+					if row.startswith(" *>"):
+						## selected route
+						as_path = fields[-1].replace('i',' ').strip().split(' ')
+						parsed_as_path = ['14']
+						prev_hop = None
+						for el in as_path:
+							el = el.replace("{","").replace("}","")
+							for ell in el.split(","):
+								try:
+									if int(el) >= 64512 and int(el) <= 65534:
+										## private IP address
+										continue
+								except ValueError:
+									pass
+								if ell == '0': continue
+								if prev_hop != ell:
+									parsed_as_path.append(ell)
+								prev_hop = ell
+						as_paths_by_pref[pref] = parsed_as_path
+						if len(parsed_as_path) == 2 and parsed_as_path[-1] == '16509':
+							print(row)
+						# if as_paths_by_pref[pref][-1] == '16509':
+						# 	print(row)
+						# 	print(as_paths_by_pref[pref])
+						# 	if np.random.random() > .99:
+						# 		exit(0)
+					else:
+						continue
+					
+				# print(as_paths_by_pref.get("199.109.94.18"))
+				# exit(0)
+
+				# print(len(as_paths_by_pref))
+				
+				all_objs = {} # code reuse
+				to_del = []
+				for t in self.targets:
+					as_path = as_paths_by_pref.get(t + "/32")
+					if as_path is None:
+						all_objs[t] = {'as_paths': None, 'reached_dst_network': False, 'reached_dst': False}
+						# if np.random.random() > .999:
+						# 	print("No BGP route found for {}, random print".format(t))
+					else:
+						all_objs[t] = {'as_paths': as_path, 'reached_dst_network': True,'reached_dst': True}
+
+
+				total_traffic = sum(self.targets[t]['total'] for t in self.targets)
+				asps = {t:[self.parse_asn(el.replace("{","").replace("}","")) for el in obj['as_paths'] if el != 'None' and el != '0' and el !='?'  and el !='e'] for t,obj in all_objs.items()
+					if obj['reached_dst']}
+				pct_traffic = round(sum(self.targets[t]['total'] for t in asps) / total_traffic * 100.0 ,2)
+				print("{} pct ({}) of traceroutes, {} pct of traffic, reached a destination".format(100 * len(asps) / len(all_objs),
+					len(asps), pct_traffic))
+				asps = {t: [self.parse_asn(el.replace("{","").replace("}","")) for el in obj['as_paths'] if el != 'None' and el != '0' and el !='?' and el !='e'] for t,obj in all_objs.items()
+					if obj['reached_dst_network']}
+				# for t,asp in sorted(asps.items(), key = lambda el : -1 * self.targets.get(t[0],{'total':0})['total']):
+				# 	v = self.targets.get(t,{'total':0})['total']
+				# 	if len(set(asp)) == 2:
+				# 		print("{} -- {}, {}, {}".format(t,asp,all_objs[t],v))
+				# 		if np.random.random() > .999:
+				# 			break
+				aspls = {ip:len(set(el)) for ip,el in asps.items()}
+
+				all_objs_whole_internet = {t: {'as_paths': as_paths_by_pref.get(t), 'reached_dst_network': True} for t in as_paths_by_pref}
+				asps_whole_internet = {t: [self.parse_asn(el.replace("{","").replace("}","")) for el in obj['as_paths'] if el != 'None' and el != '0' and el !='?' and el !='e'] for t,obj in all_objs_whole_internet.items()
+					if obj['reached_dst_network']}
+				
+
+				aspls_whole_internet = {ip:len(set(el))+1 for ip,el in asps_whole_internet.items()}
+
+
+				pickle.dump({
+					"asp_campus": asps, 
+					"aspl_campus": aspls, 
+					"all_objs_campus": all_objs,
+					"asp_whole_internet": asps_whole_internet,
+					"aspl_whole_internet": aspls_whole_internet,
+					"all_objs_whole_internet": all_objs_whole_internet,
+					"org_to_as": self.org_to_as,
+				}, open(cache_fn,'wb'))
+				pickle.dump({
+					'aspl_campus':aspls,
+					'aspl_whole_internet':aspls_whole_internet,
+				}, open(os.path.join(CACHE_DIR, 'aspls_from_cu.pkl'),'wb'))
+			else:
+				all_objs = pickle.load(open(cache_fn, 'rb'))
+				aspls_obj = pickle.load(open(os.path.join(CACHE_DIR, 'aspls_from_cu.pkl'),'rb'))
+				aspls = aspls_obj['aspl_campus']
+				aspls_whole_internet = aspls_obj['aspl_whole_internet']
+				all_objs_campus = all_objs['all_objs_campus']
+
+			cdf_aspls = {}
+
+			# second_hops = {}
+			# first_hop = '14'
+			# for dst,asp in asps.items():
+			# 	for hop in asp:
+			# 		if hop != first_hop:
+			# 			try:
+			# 				second_hops[hop] += 1
+			# 			except KeyError:
+			# 				second_hops[hop] = 1 
+			# 			break
+			# sorted_second_hops = sorted(second_hops.items(),  key = lambda el : -1 * el[1])
+			# top_second_hops = sorted_second_hops[0:20]
+			# top_second_hop_ases = [el[0] for el in sorted_second_hops[0:20]]
+			# print("Top second hop ASes: {}".format(top_second_hops))
+			# for dst,asp in asps.items():
+			# 	for hop in asp:
+			# 		if hop != first_hop:
+			# 			if hop in top_second_hop_ases and hop not in ['174','3257', '16509','3754','40627']:
+			# 				print("{} {}".format(hop,first_hop))
+			# 				print("{} {} {}".format(dst,asp,all_objs[dst]))
+			# 			break
+			not_included = {k:None for k in get_difference(self.targets, aspls)}
+			sorted_not_included = sorted(not_included, key = lambda el : -1 * self.targets[el]['total'])
+			print("Worst not included {}".format(sorted_not_included[0:100]))
+
+			targs_of_interest = list(get_intersection(aspls, self.targets))
+
+			## load offnets and handle them separately
+			offnet_addresses = pickle.load(open(os.path.join(DATA_DIR, 'offnets.p'),'rb'))
+			for oa in sorted(get_intersection(offnet_addresses, self.targets),
+				key = lambda el : -1 * self.targets[el]['total'])[0:100]:
+
+				try:
+					not_included[oa]
+					oaini = True
+				except KeyError:
+					oaini = False
+				print("{} -- {} (not in results {})".format(oa, self.targets[oa]['total'], oaini))
+				if not oaini:
+					print(all_objs.get(oa,'offnet address from pickle not found in routes'))
+			offnet_addresses = get_intersection(targs_of_interest, offnet_addresses)
+			for offnet_address in offnet_addresses:
+				aspls[offnet_address] += .5
+
+
+			## Get ASPL by AS
+			aspl_by_as = {}
+			for t in targs_of_interest:
+				asn = self.parse_asn(t)
+				if asn is None: continue
+				try:
+					aspl_by_as[asn].append((t,aspls[t]))
+				except KeyError:
+					aspl_by_as[asn] = [(t,aspls[t])]
+		
+
+			aspl_arr = [aspls[targ] for targ in targs_of_interest]
+			for k, lab in zip(['out', 'total', 'in'], 
+				['Out Bytes', 'Total Bytes', "In Bytes"]):
+				wts = [self.targets[targ][k] for targ in targs_of_interest]
+				aspl_arr_wtd = list(zip(aspl_arr,wts))
+				aspl_arr_wtd_with_targs = list(zip(aspl_arr,wts,targs_of_interest))
+				sorted_arr = sorted(aspl_arr_wtd_with_targs, key = lambda el : -1 * el[1])
+				print(lab)
+				print(sorted_arr[0:30])
+				for aspl,wt,targ in sorted_arr:
+					if aspl == 2:
+						print(targ)
+						if np.random.random() > .99:
+							break
+
+				easier_format = {}
+				for aspl,val in aspl_arr_wtd:
+					try:
+						easier_format[aspl] += val
+					except KeyError:
+						easier_format[aspl] = val
+
+				vals = list(easier_format.keys())
+				wts = list([easier_format[aspl] for aspl in vals])
+				aspl_arr_wtd = list(zip(vals,wts))
+
+				x,cdf_x = get_cdf_xy(aspl_arr_wtd, weighted=True)
+				cdf_aspls[k] = (x,cdf_x)
+			
+			x,cdf_x = get_cdf_xy(aspl_arr)
+			cdf_aspls['destinations'] = (x,cdf_x)
+			x,cdf_x = get_cdf_xy(list(aspls_whole_internet.values()))
+			cdf_aspls['whole_internet'] = (x,cdf_x)
+
+			# amazon
+			aspl_for_amazon = aspl_by_as[self.parse_asn('16509')]
+			aspl_for_amazon = list([(aspl,self.targets[t]['total']) for t,aspl in aspl_for_amazon])
+			x,cdf_x = get_cdf_xy(aspl_for_amazon,weighted=True)
+			cdf_aspls['amazon'] = (x,cdf_x)
+
+			pickle.dump(cdf_aspls, open(cdf_aspl_cache_fn,'wb'))
+		else:
+			cdf_aspls = pickle.load(open(cdf_aspl_cache_fn, 'rb'))
+
+		import matplotlib
+		matplotlib.rcParams.update({'font.size': 18})
+		import matplotlib.pyplot as plt
+		f,ax = plt.subplots(1,1)
+		f.set_size_inches(12,6)
+		# fig, ax = plt.subplots(1, 2, figsize=(14,7))
+		i = 0
+		every_other = 7
+		for k, lab in zip(['in', 'out', 'total','destinations','whole_internet','amazon'], 
+			["In Residential Traffic", 'Out Residential Traffic', 'Total Bytes',
+			'Residential Traffic Remote Hosts', "All Routable Prefixes", "Amazon"]):
+			if k == 'total': continue
+			x,cdf_x = cdf_aspls[k]
+			ax.plot(x[::every_other],cdf_x[::every_other],label=lab,marker=MARKERSTYLES[i],
+				markersize=8)
+			i+=1
+
+		# x,cdf_x = get_cdf_xy(aspl_by_as_med)
+		# ax[1].plot(x,cdf_x,label="Campus Traffic Targets")
+
+		# ## Get ASPL by AS for whole internet
+		# aspl_by_as_whole_internet = {}
+		# for t in aspls_whole_internet:
+		# 	asn = self.parse_asn(t)
+		# 	if asn is None: continue
+		# 	try:
+		# 		aspl_by_as_whole_internet[asn].append(aspls_whole_internet[t])
+		# 	except KeyError:
+		# 		aspl_by_as_whole_internet[asn] = [aspls_whole_internet[t]]
+		# aspl_by_as_whole_internet_med = [np.median(as_aspls) for as_aspls in aspl_by_as_whole_internet.values()]
+		# x,cdf_x = get_cdf_xy(aspl_by_as_whole_internet_med)
+		# ax[1].plot(x,cdf_x,label="Whole Internet")
+
+		ax.grid(True)
+		# ax[1].grid(True)
+		ax.set_xlabel("AS Path Length")
+		# ax[1].set_xlabel("AS Path Length")
+		ax.set_xlim([1,8])
+		# ax[1].set_xlim([2,8])
+		ax.set_ylabel("CDF of Destinations/Traffic")
+		# ax[1].set_ylabel("CDF of ASes")
+		ax.legend()
+		ax.annotate("Offnet\nTraffic", (2.1,.26))
+		# ax[1].legend()
+		plt.savefig('figures/all_aspls_from_cu.pdf')
+
+
 	def sync_results(self):
 		parent_id = traceroute_meas_folder_id
-		have_results = os.listdir(MEASUREMENT_DIR)
+		have_results = [el.split('.')[0] for el in os.listdir(MEASUREMENT_DIR)]
 		gdrive = get_gdrive()
 		files = get_file_list(gdrive, parent_id)
 
 
-		times_of_interest = ['1684845466']
+		times_of_interest = ['1684845466','1684980072']
 
 
 		for fn in tqdm.tqdm(files,desc="Downloading files from cloud."):
 			dlfn = fn['originalFilename']
-			if dlfn not in have_results:
+			if dlfn.split('.')[0] not in have_results:
 				is_interesting = False or 'topips' in dlfn
 				for t in times_of_interest:
 					if t in dlfn:
@@ -573,8 +903,8 @@ class Campus_Measurement_Analyzer:
 	def run(self):
 		# self.sync_results()
 		# self.parse_ping_result_set()
-		self.parse_trace_result_set()
-
+		# self.parse_trace_result_set()
+		self.aspl_from_bgp_routes()
 
 if __name__ == "__main__":
 	cma = Campus_Measurement_Analyzer()

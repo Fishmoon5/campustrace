@@ -69,7 +69,124 @@ class Service_Mapper(Campus_Measurement_Analyzer):
 			if np.random.random() > .9:break
 		print(len(service_ctrs))
 
+	def classify_traffic_types_high_level_small(self):
+		data = {}
+		for row in open(os.path.join(DATA_DIR, 'protocol_port_nbytes_nflows.csv'),'r'):
+			flowuid,istcp,port,nflows,nbytes = row.strip().split(',')
+			if flowuid == "":continue
+			istcp = int(istcp)
+			data[istcp,port] = float(nbytes)
+		total_volume = sum(list(data.values()))
+		cum_pct = 0
+			
+		uid_to_high_level = ['tls','quic','http','communication','vpn','filesharing',
+		'communication','?','gaming','communication','email','vpn','http','http',
+		'?','vpn','vpn','communication','?','gaming','?','communication','management',
+		'gaming','management','?','communication','vpn','gaming']
 
+		high_level_to_pct = {hl:0 for hl in uid_to_high_level}
+		i=0
+		for (istcp,port),nb in sorted(data.items(), key = lambda el : -1 * el[1])[0:100]:
+			protocol = 'tcp' if istcp else 'udp'
+
+			pct = round(nb*100.0/total_volume,2)
+			cum_pct += pct
+			print("{}:{}, {} pct. of traffic, {} cum".format(protocol,port,
+				pct,cum_pct))
+
+			try:
+				high_level_to_pct[uid_to_high_level[i]] += pct
+			except IndexError:
+				high_level_to_pct['?'] += pct
+			i += 1
+
+		import pprint
+		pprint.pprint(high_level_to_pct)
+
+	def classify_traffic_types_high_level(self):
+		## get port breakdown, http, https, etc..
+
+		cache_fn = os.path.join(CACHE_DIR, 'high_level_traffic_classification.pkl')
+
+		if not os.path.exists(cache_fn):
+			np.random.seed(31415)
+			self.get_service_bytes_by_separator()
+
+
+			### things to look for
+			## domain y/n, sni y/n
+			## port breakdown
+			## tcp udp
+
+			traffic_classes = {}
+			for row in tqdm.tqdm(open(os.path.join(DATA_DIR, 'per_flow_data_april.csv'),'r'),
+				desc="Loading April flow data"):
+				flowuid,tstart,tend,unit,dstip,nb,dns,_,sni,port,EyeballVote,HighPort,DstNoDNS = row.strip().split(",")
+				if flowuid == "": continue
+				uid = (domain_to_domainstr(dns),domain_to_domainstr(sni))
+
+
+				no_domain_indicator = (uid[0] == "")
+				no_sni_indicator =  ( uid[1] == "")
+				no_domainsni_indicator =  (uid[0] == "" and uid[1] == "")
+
+				service = self.domain_sni_to_service.get(uid)
+				service_mapped_indicator = (service is not None)
+
+				overall_indicator = (port,protocol,no_domain_indicator,no_sni_indicator,no_domain_sni_indicator,
+					service_mapped_indicator)
+
+				try:
+					traffic_classes[overall_indicator] += nb
+				except KeyError:
+					traffic_classes[overall_indicator] = nb
+
+
+			pickle.dump({
+				'traffic_classes': traffic_classes,
+			 }, open(cache_fn, 'wb'))
+		else:
+			traffic_classes = pickle.load(open(cache_fn,'rb'))
+
+	def map_destinations_to_services(self):
+		np.random.seed(31415)
+		self.get_service_bytes_by_separator()
+
+		dst_to_services_nb = {}
+		service_to_dst_nb = {}
+		service_to_time = {}
+
+		for row in tqdm.tqdm(open(os.path.join(DATA_DIR, 'per_flow_data_april.csv'),'r'),
+			desc="Loading April flow data"):
+			flowuid,tstart,tend,unit,dstip,nb,dns,_,sni,port,EyeballVote,HighPort,DstNoDNS = row.strip().split(",")
+			if flowuid == "": continue
+			uid = (domain_to_domainstr(dns),domain_to_domainstr(sni))
+
+			if uid[0] == "" and uid[1] == "": continue
+
+			service = self.domain_sni_to_service.get(uid)
+			if service is None:
+				continue
+
+			try:
+				dst_to_services_nb[dstip][service] = float(nb)
+			except KeyError:
+				dst_to_services_nb[dstip] = {service: float(nb)}
+			try:
+				service_to_dst_nb[service][dstip] = float(nb)
+			except KeyError:
+				service_to_dst_nb[service] = {dstip: float(nb)}
+			try:
+				service_to_time[service] += (float(tend) - float(tstart))
+			except KeyError:
+				service_to_time[service] = (float(tend) - float(tstart))
+
+
+		pickle.dump({
+			'dst_to_services_nb': dst_to_services_nb,
+			'service_to_dst_nb': service_to_dst_nb,
+			'service_to_time': service_to_time,
+		 }, open(os.path.join(CACHE_DIR, 'destinations_to_services.pkl'), 'wb'))
 
 	def correlate_over_time(self):
 		np.random.seed(31415)
@@ -95,22 +212,22 @@ class Service_Mapper(Campus_Measurement_Analyzer):
 			uid = (domain_to_domainstr(dns),domain_to_domainstr(sni))
 			
 
-			if dns == "":
-				### No DNS traffic
-				asn = self.parse_asn(dstip)
-				EyeballVote = int(EyeballVote)
-				obj = {
-					'port': port,
-					'dstnodns': int(DstNoDNS != 'False'),
-					'eyeballvote': (EyeballVote//1000, (EyeballVote%1000) // 100, (EyeballVote%100) // 10, 
-						(EyeballVote%10) // 1),
-					'highport': int(HighPort != 'False'),
-					'nb': float(nb),
-				}
-				try:
-					no_dns_traffic[asn].append(obj)
-				except KeyError:
-					no_dns_traffic[asn] = [obj]
+			# if dns == "":
+			# 	### No DNS traffic
+			# 	asn = self.parse_asn(dstip)
+			# 	EyeballVote = int(EyeballVote)
+			# 	obj = {
+			# 		'port': port,
+			# 		'dstnodns': int(DstNoDNS != 'False'),
+			# 		'eyeballvote': (EyeballVote//1000, (EyeballVote%1000) // 100, (EyeballVote%100) // 10, 
+			# 			(EyeballVote%10) // 1),
+			# 		'highport': int(HighPort != 'False'),
+			# 		'nb': float(nb),
+			# 	}
+			# 	try:
+			# 		no_dns_traffic[asn].append(obj)
+			# 	except KeyError:
+			# 		no_dns_traffic[asn] = [obj]
 
 			if uid[0] == "" and uid[1] == "": continue
 
@@ -139,24 +256,24 @@ class Service_Mapper(Campus_Measurement_Analyzer):
 				service_to_units[service] = {unit:None}
 
 
-		all_no_dns = sum([flow['nb'] for flows in no_dns_traffic.values() for flow in flows])
-		print("No DNS is {} pct.".format(all_no_dns * 100.0 / total_traffic))
-		cases_by_asn = {'cases':{}, 'orgs': self.org_to_as}
-		for asn, flows in no_dns_traffic.items():
-			cases_by_asn['cases'][asn] = {}
-			for flow in flows:
-				is_eyeball = any(list(flow['eyeballvote']))
-				# problem children are its being called eyeball but has dns
-				high_port = flow['highport']
-				nodns = flow['dstnodns']
-				case = (is_eyeball, high_port, nodns)
-				try:
-					cases_by_asn['cases'][asn][case] += flow['nb']
-				except KeyError:
-					cases_by_asn['cases'][asn][case] = flow['nb']
+		# all_no_dns = sum([flow['nb'] for flows in no_dns_traffic.values() for flow in flows])
+		# print("No DNS is {} pct.".format(all_no_dns * 100.0 / total_traffic))
+		# cases_by_asn = {'cases':{}, 'orgs': self.org_to_as}
+		# for asn, flows in no_dns_traffic.items():
+		# 	cases_by_asn['cases'][asn] = {}
+		# 	for flow in flows:
+		# 		is_eyeball = any(list(flow['eyeballvote']))
+		# 		# problem children are its being called eyeball but has dns
+		# 		high_port = flow['highport']
+		# 		nodns = flow['dstnodns']
+		# 		case = (is_eyeball, high_port, nodns)
+		# 		try:
+		# 			cases_by_asn['cases'][asn][case] += flow['nb']
+		# 		except KeyError:
+		# 			cases_by_asn['cases'][asn][case] = flow['nb']
 
-		pickle.dump(cases_by_asn, open('cache/nodns.pkl','wb'))
-		exit(0)
+		# pickle.dump(cases_by_asn, open('cache/nodns.pkl','wb'))
+		# exit(0)
 
 
 		total_bytes_by_service = {}
@@ -250,27 +367,31 @@ class Service_Mapper(Campus_Measurement_Analyzer):
 		self.domain_sni_uids = {}
 		if kwargs.get('by','building') == 'building':
 			self.domain_sni_uids_by_building = {}
+			self.domain_sni_uids_by_building_flows = {}
 			for row in open(os.path.join(DATA_DIR, 
-				'buildingip_dns_dnsorig_sni_inbytes_outbytes.csv'),'r'):
+				'buildingip_dns_dnsorig_sni_inbytes_outbytes_nflows.csv'),'r'):
 				if row.strip() == "": continue
-				i,building,domain,_,sni,inb,outb = row.strip().split(",")
+				i,building,domain,_,sni,nb,nflows = row.strip().split(",")
 				if i == "": continue
 				domain = domain_to_domainstr(domain)
 				sni = domain_to_domainstr(sni)
 				if domain == "" and sni == "": continue ### NO DNS TRAFFIC
 				uid = (domain,sni)
 				try:
-					self.domain_sni_uids[uid] += (float(inb) + float(outb))
+					self.domain_sni_uids[uid] += float(nb)
 				except KeyError:
-					self.domain_sni_uids[uid] = (float(inb) + float(outb))
+					self.domain_sni_uids[uid] = float(nb)
 				try:
 					self.domain_sni_uids_by_building[building]
 				except KeyError:
 					self.domain_sni_uids_by_building[building] = {}
+					self.domain_sni_uids_by_building_flows[building] = {}
 				try:
-					self.domain_sni_uids_by_building[building][uid] += (float(inb) + float(outb))
+					self.domain_sni_uids_by_building[building][uid] += float(nb)
+					self.domain_sni_uids_by_building_flows[building][uid] += float(nflows)
 				except KeyError:
-					self.domain_sni_uids_by_building[building][uid] = (float(inb) + float(outb))
+					self.domain_sni_uids_by_building[building][uid] = float(nb)
+					self.domain_sni_uids_by_building_flows[building][uid] = float(nflows)
 		elif kwargs.get('by','building') == 'unit':
 			self.domain_sni_uids_by_unit = {}
 			for row in tqdm.tqdm(open(os.path.join(DATA_DIR, 
@@ -292,7 +413,7 @@ class Service_Mapper(Campus_Measurement_Analyzer):
 					self.domain_sni_uids_by_unit[unit][uid] += float(nb)
 				except KeyError:
 					self.domain_sni_uids_by_unit[unit][uid] = float(nb)
-				if np.random.random() > .9999999:break
+
 		elif kwargs.get('by','building') == 'hour':
 			self.domain_sni_uids_by_hour = {}
 			for row in tqdm.tqdm(open(os.path.join(DATA_DIR, 
@@ -302,6 +423,7 @@ class Service_Mapper(Campus_Measurement_Analyzer):
 				uid = (domain_to_domainstr(dns),domain_to_domainstr(sni))
 				if uid[0] == "" and uid[1] == "": continue
 
+				time = "-".join(time.split('-')[0:-1])
 				try:
 					self.domain_sni_uids[uid] += float(nb)
 				except KeyError:
@@ -314,6 +436,7 @@ class Service_Mapper(Campus_Measurement_Analyzer):
 					self.domain_sni_uids_by_hour[time][uid] += float(nb)
 				except KeyError:
 					self.domain_sni_uids_by_hour[time][uid] = float(nb)
+
 
 	def load_not_done_domains(self):
 		"""Loads domains seen in campus network traces."""
@@ -393,6 +516,55 @@ class Service_Mapper(Campus_Measurement_Analyzer):
 								  desired_capabilities=desired_capabilities)
 	def close_resources(self):
 		self.driver.quit()
+
+	def get_service_activity_measure_dists(self):
+		## Get volume data
+		by_measure_cache_fn = os.path.join(CACHE_DIR, 'by_activity_measure_cache.pkl')
+		if not os.path.exists(by_measure_cache_fn):
+			self.get_service_bytes_by_separator()
+			service_to_time = pickle.load(open(os.path.join(CACHE_DIR, 
+				'destinations_to_services.pkl'),'rb'))['service_to_time']
+			by_measure = {
+				'dns_responses': {},
+				'bytes': {},
+				'flows': {},
+				'time': service_to_time,
+			}
+			for arr,activity_type in zip([self.domain_sni_uids_by_building,
+				self.domain_sni_uids_by_building_flows], ['bytes', 'flows']):
+				for building in arr:
+					for uid,n in arr[building].items():
+						service = self.domain_sni_to_service.get(uid)
+						if service is None: continue
+						try:
+							by_measure[activity_type][service] += n
+						except KeyError:
+							by_measure[activity_type][service] = n
+			da = Domain_Parsing(popular_domains = self.popular_domains)
+			for row in tqdm.tqdm(open(os.path.join(DATA_DIR, 'building_service_ndns.csv'),'r'),
+				desc="Loading dns response counts..."):
+				try:
+					flow_uid,building,domain,n = row.strip().split(',')
+				except ValueError:
+					continue
+				if flow_uid == "": continue
+				if domain == "": continue
+				uid = (domain, "")
+				info = da.map_uid_to_service(uid)
+				if info['ignore']: continue
+				if info['mapped_to_service']:
+					service = info['service']
+				else:
+					service = uid
+				try:
+					by_measure['dns_responses'][service] += float(n)
+				except KeyError:
+					by_measure['dns_responses'][service] = float(n)
+
+			pickle.dump(by_measure, open(by_measure_cache_fn,'wb'))
+		else:
+			by_measure = pickle.load(open(by_measure_cache_fn, 'rb'))
+		return by_measure
 
 	def get_service_bytes_by_separator(self, **kwargs):
 		self.compute_domains_to_services(**kwargs)
@@ -493,7 +665,7 @@ class Service_Mapper(Campus_Measurement_Analyzer):
 				s = domain_to_domainstr(s)
 				if n < 3:
 					self.unpopular_domains[s] = None
-				elif n > 20:
+				elif n > 100:
 					self.popular_domains[s] = None
 			# print("\n\nPOPULAR DOMAINS---")
 			# print(self.popular_domains)
@@ -503,10 +675,14 @@ class Service_Mapper(Campus_Measurement_Analyzer):
 			known_services = {}
 			service_to_nb = {}
 			mapped_bytes, total_b = 0,0
+			bts_ignore,overall_total_b = 0,0
 			self.domain_sni_to_service = {}
 			for uid, bts in tqdm.tqdm(self.domain_sni_uids.items(), desc="Mapping all domains to services."):
+				overall_total_b += bts
 				info = da.map_uid_to_service(uid)
-				if info['ignore']: continue
+				if info['ignore']: 
+					bts_ignore += bts
+					continue
 				used_field = info['used_field']
 				total_b += bts
 				if info['mapped_to_service']:
@@ -524,7 +700,7 @@ class Service_Mapper(Campus_Measurement_Analyzer):
 				else:
 					unmappable_domains.append(uid)
 					self.domain_sni_to_service[uid] = uid
-
+			print("popular services are {} pct of bytes".format(round(100*bts_ignore/overall_total_b,2)))
 			with open(os.path.join(CACHE_DIR, 'computed_domain_to_service.txt'),'w') as f:
 				for service in sorted(known_services, key = lambda el : -1 * service_to_nb[el]):
 					domains = known_services[service]
@@ -532,8 +708,6 @@ class Service_Mapper(Campus_Measurement_Analyzer):
 					f.write("{}\t{}\n".format(service,domains_str))
 			with open(os.path.join(CACHE_DIR, 'unmapped_domains_new.txt'),'w') as f:
 				for domain in unmappable_domains:
-					if 'us-east-2.amazonaws' in domain[0]:
-						print("{} {}".format(domain, self.domain_sni_uids[domain]))
 					f.write("{}\n".format(domain))
 			self.sorted_unmappable_domains = sorted(unmappable_domains, key = lambda el : -1 * self.domain_sni_uids[el])
 			print("\n\nHEAVY HITTERS")
@@ -557,16 +731,20 @@ class Service_Mapper(Campus_Measurement_Analyzer):
 
 			if kwargs.get('by','building') == 'building':
 				pickle.dump({
+					'popular_domains': self.popular_domains,
 					'domain_sni_to_service': self.domain_sni_to_service,
 					'sorted_unmappable_domains': self.sorted_unmappable_domains,
 					'domain_sni_uids_by_building': self.domain_sni_uids_by_building,
+					'domain_sni_uids_by_building_flows': self.domain_sni_uids_by_building_flows,
 				}, open(domain_to_service_cache_fn,'wb'))
 		else:
 			print("Loading domain sni from cache")
 			cache = pickle.load(open(domain_to_service_cache_fn, 'rb'))
+			self.popular_domains = cache['popular_domains']
 			self.domain_sni_to_service = cache['domain_sni_to_service']
 			self.sorted_unmappable_domains = cache['sorted_unmappable_domains']
 			self.domain_sni_uids_by_building = cache['domain_sni_uids_by_building']
+			self.domain_sni_uids_by_building_flows = cache['domain_sni_uids_by_building_flows']
 
 	def fetch_domains(self):
 		try:
@@ -594,9 +772,11 @@ class Service_Mapper(Campus_Measurement_Analyzer):
 
 if __name__ == "__main__":
 	sm = Service_Mapper()
+	sm.classify_traffic_types_high_level_small()
+	# sm.map_destinations_to_services()
 	# sm.fetch_domains()
 	# sm.compute_domains_to_services()
-	sm.correlate_over_time()
+	# sm.correlate_over_time()
 	# sm.identify_services_from_correlation()
 
 
