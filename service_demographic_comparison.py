@@ -177,6 +177,7 @@ class Service_Demographic_Comparison():
 		self.setup_activity_comparison_data()
 		divider_type = 'activity_measure'
 
+#####TODO: could do time a single flow to the service is active
 		print("\n\n-----DIVIDING BY TYPE {}------".format(divider_type))
 
 		service_bytes_by_divider = self.activity_by_service
@@ -190,21 +191,34 @@ class Service_Demographic_Comparison():
 		import matplotlib
 		matplotlib.rcParams.update({'font.size': 18})
 		import matplotlib.pyplot as plt
-		f,ax = plt.subplots(1,1)
-		f.set_size_inches(12,6)
-		linestyles=['-', '-.', ':','--']
 
-		for lab in ['Flows','Flow\nDuration','DNS\nResponses','Bytes']:
-			divideri = np.where(np.array(cats)==lab)[0][0]
-			ax.semilogx(self.domains_arr[divideri,0:1000]*100.0,
-				label=cats[divideri],linestyle=linestyles[divideri])
-		ax.legend()
-		ax.set_xlabel("Rank by Traffic Volume")
-		ax.set_ylabel("Percent of Total Activity")
-		ax.set_xticks([1,10,100,1000])
-		ax.set_xticklabels(['1','10','100','1000'])
-		plt.savefig('figures/activity_measures_topn.pdf')
-		plt.clf(); plt.close()
+		for ploti in range(len(cats) + 2):
+			f,ax = plt.subplots(1,1)
+			f.set_size_inches(12,6)
+			linestyles=['-', '-.', ':','--']
+
+			if ploti == len(cats) + 1:
+				ordering = ['Flows','Flow\nDuration','DNS\nResponses','Bytes']
+			else:
+				ordering = ['Bytes', "DNS\nResponses", "Flow\nDuration", "Flows"]
+			for i,lab in enumerate(ordering):
+				if i >= ploti: break
+				divideri = np.where(np.array(cats)==lab)[0][0]
+				ax.semilogx(self.domains_arr[divideri,0:1000]*100.0,
+					label=cats[divideri],linestyle=linestyles[divideri])
+			ax.set_xlabel("Rank by Traffic Volume")
+			ax.set_ylabel("Percent of Total Activity")
+			ax.set_xticks([1,10,100,1000])
+			ax.set_xticklabels(['1','10','100','1000'])
+			ax.set_ylim([0,21])
+
+			if ploti == len(cats) + 1:
+				ax.legend()
+				plt.savefig('figures/activity_measures_topn.pdf')
+			else:
+				plt.savefig('figures/activity_measures_topn_{}.png'.format(ploti))
+
+			plt.clf(); plt.close()
 
 
 
@@ -391,7 +405,7 @@ class Service_Demographic_Comparison():
 
 		self.in_order_dividers = {
 			'building': building_subnets,
-			'category': ['grad','gradfacstaff','pdocsfacstaff','facstaff','all traffic']
+			'category': ['all traffic','grad','facstaff']#['grad','gradfacstaff','pdocsfacstaff','facstaff','all traffic']
 		}
 
 		## aggregate to pseudo buildings, with each category being a building
@@ -428,6 +442,9 @@ class Service_Demographic_Comparison():
 			if divider_type == 'building': continue
 
 			self.service_bytes_by_divider = service_bytes_by_divider
+			### FOR SHUYUE PRESENTATION
+			self.service_bytes_by_divider = {k:self.service_bytes_by_divider[k] for k in ['all traffic', 'grad', 'facstaff']}
+			### 
 			dist_mat = self.get_dist_mat(divider_type, metric, **kwargs)
 			dmat_sum = np.sum(dist_mat, axis=0)
 
@@ -488,18 +505,20 @@ class Service_Demographic_Comparison():
 	def crosswise_comparisons(self):
 		metrics = [pdf_distance,weighted_jaccard, euclidean,rbo_wrap,spearman, cosine_similarity, jaccard]
 		labs = ['bc','wjac', 'euclidean','rbo','spearman', 'cos_sim', 'jac']
-		ax_labs = ['Bhattacharyya Distance', 'Weighted Jaccard Index', 'Euclidean Distance','Rank-Biased Overlap', 'Spearman Correlation', 'Cosine Similarity',
+		# ax_labs = ['Bhattacharyya Distance', 'Weighted Jaccard Index', 'Euclidean Distance','Rank-Biased Overlap', 'Spearman Correlation', 'Cosine Similarity',
+		# 	 'Jaccard Index']
+		ax_labs = ['Similarity', 'Weighted Jaccard Index', 'Euclidean Distance','Rank-Biased Overlap', 'Spearman Correlation', 'Cosine Similarity',
 			 'Jaccard Index']
 		for metric,lab,axis_lab in zip(metrics,labs,ax_labs):
 			print("\n\n\nCOMPUTING METRIC {}\n\n\n".format(lab))
-			# self.compare_building_domains(metric, n_doms=1000, plt_lab=lab, axis_lab=axis_lab)
-			self.compare_activity_measures(metric, plt_lab=lab, axis_lab=axis_lab)
+			self.compare_building_domains(metric, n_doms=1000, plt_lab=lab, axis_lab=axis_lab)
+			# self.compare_activity_measures(metric, plt_lab=lab, axis_lab=axis_lab)
 			exit(0)
 
 
 if __name__ == "__main__":
 	sdc = Service_Demographic_Comparison()
 	# sdc.unit_representativity()
-	sdc.temporal_representativity()
-	# sdc.crosswise_comparisons()
+	# sdc.temporal_representativity()
+	sdc.crosswise_comparisons()
 
