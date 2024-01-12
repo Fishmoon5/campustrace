@@ -8,7 +8,13 @@ from service_mapping import Service_Mapper
 
 class Service_Demographic_Comparison():
 	def __init__(self):
-		pass
+		self.all_building_subnets = [
+			"160.39.40.128", "160.39.41.128", "160.39.61.128", "160.39.61.0", "160.39.62.192", "160.39.62.128", "160.39.62.0", "160.39.63.128", "160.39.63.64", "160.39.63.0", # grad students
+		    "160.39.2.0", # undergraduate students in the School of General Studies
+		    "160.39.41.0", "160.39.56.128", "160.39.59.0", # students, faculty and staff
+		    "128.59.122.128", "160.39.21.128", "160.39.22.0", "160.39.38.128", # postdocs, faculty and staff
+		    "160.39.22.128" # faculty and staff
+		]
 
 	def temporal_representativity(self):
 		np.random.seed(31415)
@@ -25,6 +31,28 @@ class Service_Demographic_Comparison():
 
 			### Q: let x = global service average
 			## how does err(mean[included_set] - x) vary as we include more in the set?
+
+			nsim_atmost = 200
+			errs_over_n_sim = np.zeros((nsim_atmost,nunits-1))
+			for i in range(nsim_atmost):
+				ordering = np.arange(nunits)
+				np.random.shuffle(ordering)
+				current_average = self.domains_arr[ordering[0],:]
+				current_sum = self.domains_arr[ordering[0],:]
+				next_sum = current_sum.copy()
+				next_average = current_average.copy()
+				for j in range(nunits-1):
+					next_unit = ordering[j+1]
+
+					next_sum += self.domains_arr[next_unit,:]
+					next_average = next_sum / np.sum(next_sum)
+					errs_over_n_sim[i,j] = 1-pdf_distance(current_average, next_average)
+
+					current_sum = next_sum.copy()
+					current_average = next_average.copy()
+					# print(current_average[0:10])
+
+			print(errs_over_n_sim)
 
 			nsim_atmost = 15
 			errs_over_n_sim = {}
@@ -86,12 +114,12 @@ class Service_Demographic_Comparison():
 		ax.set_ylim([0,1.0])
 		plt.savefig("figures/day_representativeness.pdf")
 
-	def unit_representativity(self):
+	def unit_representativity(self, **kwargs):
 		np.random.seed(31415)
 		plt_cache_fn = os.path.join(CACHE_DIR, 'unit_representativity_plot_cache.pkl')
 		if not os.path.exists(plt_cache_fn):
 			# self.setup_service_by_unit_data()
-			self.setup_service_data()
+			self.setup_service_data(**kwargs)
 			self.service_bytes_by_divider = self.service_bytes_by_building
 			self.get_dist_mat('building', euclidean )
 
@@ -156,11 +184,11 @@ class Service_Demographic_Comparison():
 		ax.set_ylim([0,1.0])
 		plt.savefig("figures/building_representativeness.pdf")
 
-	def setup_activity_comparison_data(self):
+	def setup_activity_comparison_data(self, **kwargs):
 		### Want to build separator by activity measure
 		### i.e., DNS -> dns requests corresponding to service for each service
 		sm = Service_Mapper()
-		self.activity_by_service = sm.get_service_activity_measure_dists()
+		self.activity_by_service = sm.get_service_activity_measure_dists(**kwargs)
 
 		self.all_services = list(set(service for unit,services in self.activity_by_service.items()
 			 for service in services))
@@ -174,7 +202,7 @@ class Service_Demographic_Comparison():
 		}
 
 	def compare_activity_measures(self, metric, **kwargs):
-		self.setup_activity_comparison_data()
+		self.setup_activity_comparison_data(**kwargs)
 		divider_type = 'activity_measure'
 
 #####TODO: could do time a single flow to the service is active
@@ -223,7 +251,7 @@ class Service_Demographic_Comparison():
 
 
 		n_dividers = len(self.service_bytes_by_divider)
-		fig, axs = plt.subplots(n_dividers, n_dividers, figsize=(13, 10))
+		fig, axs = plt.subplots(n_dividers, n_dividers, figsize=(10 , 10))
 		sorted_rows = list(reversed(np.argsort(dmat_sum)))
 		for divideri in range(n_dividers):
 			for dividerj in range(n_dividers):
@@ -259,12 +287,13 @@ class Service_Demographic_Comparison():
 		# Adjust spacing and show plot
 		plt.subplots_adjust(wspace=-.5, hspace=-.05)
 		# plt.show()
-		plt.savefig('figures/similarities_across_{}-{}.pdf'.format(
-			divider_type, kwargs.get('plt_lab','')))
+		service_or_type = kwargs.get('service_or_type', 'service')
+		plt.savefig('figures/similarities_across_{}-{}-{}.pdf'.format(
+			divider_type, kwargs.get('plt_lab',''), service_or_type))
 		plt.clf(); plt.close()
 
 
-	def setup_service_by_unit_data(self):
+	def setup_service_by_unit_data(self, **kwargs):
 		print("Setting up service by unit data...")
 		try:
 			self.all_services
@@ -272,7 +301,7 @@ class Service_Demographic_Comparison():
 		except AttributeError:
 			pass
 		sm = Service_Mapper()
-		self.service_bytes_by_unit = sm.get_service_bytes_by_separator(by='unit')
+		self.service_bytes_by_unit = sm.get_service_bytes_by_separator(by='unit', **kwargs)
 
 		self.all_services = list(set(service for unit,services in self.service_bytes_by_unit.items()
 			 for service in services))
@@ -284,7 +313,7 @@ class Service_Demographic_Comparison():
 			'unit': self.units,
 		}
 
-	def setup_service_by_hour_data(self):
+	def setup_service_by_hour_data(self, **kwargs):
 		print("Setting up service by hour data...")
 		try:
 			self.all_services
@@ -292,7 +321,7 @@ class Service_Demographic_Comparison():
 		except AttributeError:
 			pass
 		sm = Service_Mapper()
-		self.service_bytes_by_hour = sm.get_service_bytes_by_separator(by='hour')
+		self.service_bytes_by_hour = sm.get_service_bytes_by_separator(by='hour', **kwargs)
 
 		self.all_services = list(set(service for hour,services in self.service_bytes_by_hour.items()
 			 for service in services))
@@ -377,35 +406,28 @@ class Service_Demographic_Comparison():
 
 		return dist_mat
 
-	def setup_service_data(self):
+	def setup_service_data(self, **kwargs):
 		try:
 			self.all_services
 			return
 		except AttributeError:
 			pass
 		sm = Service_Mapper()
-		self.service_bytes_by_building = sm.get_service_bytes_by_separator()
+		self.service_bytes_by_building = sm.get_service_bytes_by_separator(**kwargs)
 
 		self.all_services = list(set(service for building,services in self.service_bytes_by_building.items()
 			 for service in services))
 
-
-		all_building_subnets = [
-			"160.39.40.128", "160.39.41.128", "160.39.61.128", "160.39.61.0", "160.39.62.192", "160.39.62.128", "160.39.62.0", "160.39.63.128", "160.39.63.64", "160.39.63.0", # grad students
-		    "160.39.2.0", # undergraduate students in the School of General Studies
-		    "160.39.41.0", "160.39.56.128", "160.39.59.0", # students, faculty and staff
-		    "128.59.122.128", "160.39.21.128", "160.39.22.0", "160.39.38.128", # postdocs, faculty and staff
-		    "160.39.22.128" # faculty and staff
-		]
 		ncats,cats = [10,1,3,4,1],['grad','undergrad','gradfacstaff','pdocsfacstaff','facstaff']
 		cats = [c for i,c in enumerate(cats) for n in range(ncats[i]) ]
-		building_subnets = [b for b in all_building_subnets if b in self.service_bytes_by_building]
-		self.cats = [c for c,b in zip(cats,all_building_subnets) if b in self.service_bytes_by_building]
+		building_subnets = [b for b in self.all_building_subnets if b in self.service_bytes_by_building]
+		self.cats = [c for c,b in zip(cats, self.all_building_subnets) if b in self.service_bytes_by_building]
 
 
 		self.in_order_dividers = {
 			'building': building_subnets,
-			'category': ['all traffic','grad','facstaff']#['grad','gradfacstaff','pdocsfacstaff','facstaff','all traffic']
+			#'category': ['all traffic','grad','facstaff'], ### SHUYUE PRESENTATION
+			'category': ['grad','gradfacstaff','pdocsfacstaff','facstaff','all traffic'],
 		}
 
 		## aggregate to pseudo buildings, with each category being a building
@@ -434,7 +456,7 @@ class Service_Demographic_Comparison():
 
 
 	def compare_building_domains(self, metric, **kwargs):
-		self.setup_service_data()		
+		self.setup_service_data(**kwargs)		
 
 		for service_bytes_by_divider,divider_type in zip([self.service_bytes_by_building,self.service_bytes_by_category], 
 				['building','category']):
@@ -442,9 +464,9 @@ class Service_Demographic_Comparison():
 			if divider_type == 'building': continue
 
 			self.service_bytes_by_divider = service_bytes_by_divider
-			### FOR SHUYUE PRESENTATION
-			self.service_bytes_by_divider = {k:self.service_bytes_by_divider[k] for k in ['all traffic', 'grad', 'facstaff']}
-			### 
+			# ### FOR SHUYUE PRESENTATION
+			# self.service_bytes_by_divider = {k:self.service_bytes_by_divider[k] for k in ['all traffic', 'grad', 'facstaff']}
+			# ### 
 			dist_mat = self.get_dist_mat(divider_type, metric, **kwargs)
 			dmat_sum = np.sum(dist_mat, axis=0)
 
@@ -498,11 +520,12 @@ class Service_Demographic_Comparison():
 			# Adjust spacing and show plot
 			plt.subplots_adjust(wspace=0, hspace=-.2)
 			# plt.show()
-			plt.savefig('figures/similarities_across_{}-{}.pdf'.format(
-				divider_type, kwargs.get('plt_lab','')))
+			service_or_type = kwargs.get('service_or_type', 'service')
+			plt.savefig('figures/similarities_across_{}-{}-{}.pdf'.format(
+				divider_type, kwargs.get('plt_lab',''), service_or_type))
 			plt.clf(); plt.close()
 
-	def crosswise_comparisons(self):
+	def crosswise_comparisons(self, **kwargs):
 		metrics = [pdf_distance,weighted_jaccard, euclidean,rbo_wrap,spearman, cosine_similarity, jaccard]
 		labs = ['bc','wjac', 'euclidean','rbo','spearman', 'cos_sim', 'jac']
 		# ax_labs = ['Bhattacharyya Distance', 'Weighted Jaccard Index', 'Euclidean Distance','Rank-Biased Overlap', 'Spearman Correlation', 'Cosine Similarity',
@@ -511,14 +534,15 @@ class Service_Demographic_Comparison():
 			 'Jaccard Index']
 		for metric,lab,axis_lab in zip(metrics,labs,ax_labs):
 			print("\n\n\nCOMPUTING METRIC {}\n\n\n".format(lab))
-			self.compare_building_domains(metric, n_doms=1000, plt_lab=lab, axis_lab=axis_lab)
-			# self.compare_activity_measures(metric, plt_lab=lab, axis_lab=axis_lab)
-			exit(0)
-
+			self.compare_building_domains(metric, n_doms=1000, plt_lab=lab, axis_lab=axis_lab, **kwargs)
+			self.compare_activity_measures(metric, plt_lab=lab, axis_lab=axis_lab, **kwargs)
+			break
 
 if __name__ == "__main__":
 	sdc = Service_Demographic_Comparison()
 	# sdc.unit_representativity()
 	# sdc.temporal_representativity()
-	sdc.crosswise_comparisons()
+	sdc.crosswise_comparisons(service_or_type='service')
+	sdc = Service_Demographic_Comparison()
+	sdc.crosswise_comparisons(service_or_type='type')
 

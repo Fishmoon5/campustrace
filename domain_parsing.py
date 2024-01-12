@@ -45,7 +45,7 @@ class Domain_Parsing():
 					return kw
 		return None
 
-	def keyword_map_to_service(self, uid):
+	def keyword_map_to_service(self, uid, verb=False):
 		domain, sni = uid
 		info = {}
 
@@ -72,6 +72,8 @@ class Domain_Parsing():
 
 		domain_map = self.map_hr_str_to_keyword(domain)
 		sni_map = self.map_hr_str_to_keyword(sni)
+		if verb:
+			print("UID: {} Domain map: {} SNI map: {}".format(uid,domain_map,sni_map))
 		info['mapped_to_service'] = False
 		info['used_field'] = None
 
@@ -319,8 +321,20 @@ class Cluster_Domain_Parser(Domain_Parsing):
 
 		return self.lookup_cluster(uid)
 
+	def summarize_cluster_scores(self, domain_scores, clusters, cid):
+		### Look at items in a cluster --- what are their pairwise scores with each other?
+		cluster_of_interest = clusters[cid]
+		all_pairwise_scores = {(domainx,domainy): domain_scores.get((domainx,domainy), {'score':0})['score'] for domainx in cluster_of_interest for domainy in cluster_of_interest}
+
+		sorted_pairwise_scores = sorted(all_pairwise_scores.items(), key = lambda el : -1 * el[1])
+
+		for k,v in sorted_pairwise_scores[0:100]:
+			print("{}, {} -- {}".format(k[0],k[1], round(v,2)))
+		exit(0)
+
 	def cluster_domains(self, domain_scores):
-		for resolution in [10]:#[.0001,.001,.01,.1,1]:
+		for resolution in [10]:#[.0001,.0001,.001,.01,.1,1,10]:
+			print("Resolution: {}".format(resolution))
 			G = nx.Graph()
 			# Create the weighted graph
 			G.add_edges_from([(k1,k2,{'score':v['score']}) for (k1,k2),v in domain_scores.items()])
@@ -335,6 +349,7 @@ class Cluster_Domain_Parser(Domain_Parsing):
 				except KeyError:
 					clusters[cluster_id] = []
 				clusters[cluster_id].append(node)
+			print("Mean cluster length: {} ".format(np.mean([len(v) for v in clusters.values()])))
 
 			cluster_id_to_service_pct, cluster_id_to_known_service_pct, cluster_to_volume, cluster_to_known_service_volume = {}, {}, {}, {}
 				
@@ -381,16 +396,23 @@ class Cluster_Domain_Parser(Domain_Parsing):
 			total_known_service_volume_all_clusters = sum(list(cluster_to_known_service_volume.values()))
 
 			important_clusters = sorted(cluster_to_volume.items(), key = lambda el : -1 * el[1])
-			for cid,v in important_clusters[0:20]:
-				print("{} -- {}".format(round(v/total_volume_all_clusters,2), clusters[cid]))
+			i=0
+			for cid,v in important_clusters[0:40]:
+				i += 1
+				if max(list(cluster_id_to_known_service_pct[cid].values())) < .8: 
 
+					print("{}th largetst, {} -- {}".format(i, round(v/total_volume_all_clusters,2), clusters[cid]))
+					print(cluster_id_to_service_pct[cid])
+					# self.summarize_cluster_scores(domain_scores, clusters, cid)
+			# 		if np.random.random() > .9:
+			# 			exit(0)
+				print("\n\n")
+			# exit(0)
 			
 
 			### Additional things from service mapping
 			self.uid_to_service_mapping = {}
 			acceptable_confidence = .6 ### above this confidence we map unmapped domains to services
-
-
 
 
 			threshold_values = np.linspace(0,.999)
@@ -425,8 +447,17 @@ class Cluster_Domain_Parser(Domain_Parsing):
 
 						if threshold_value >= acceptable_confidence:
 							for uid in clusters[cluster_id]:
-								if not self.keyword_map_to_service(domain)['mapped_to_service']:
+								info = self.keyword_map_to_service(uid)
+								if not info['mapped_to_service']:
 									self.uid_to_service_mapping[uid] = best_service
+									# if self.domain_to_nbytes[uid] > 1e6:
+									# 	print("uid {} ({} MB) now mapped to {}, cluster weight: {}".format(uid, round(self.domain_to_nbytes[uid]/1e6),
+									# 		best_service, 
+									# 		cluster_id_to_known_service_pct[cluster_id]))
+									# 	if np.random.random() > .999:exit(0)
+								# else:
+								# 	print("uid {} already mapped to {}, skipping".format(uid, info['service']))
+
 
 						tp = conf ### we got conf percent correct
 						tn = 0 ### we're not saying anything is negative
@@ -461,7 +492,7 @@ class Cluster_Domain_Parser(Domain_Parsing):
 			plt.grid(True)
 			plt.xlim([0,1])
 			plt.ylim([0,1])
-			plt.savefig('cluster_roc_{}.pdf'.format(resolution))
+			plt.savefig('figures/cluster_roc_{}.pdf'.format(resolution))
 			plt.clf(); plt.close()
 
 			fig, ax1 = plt.subplots(figsize=(10, 6))
@@ -482,9 +513,11 @@ class Cluster_Domain_Parser(Domain_Parsing):
 			ax2.tick_params(axis='y', labelcolor=color)
 			ax2.set_ylim([0,1])
 			fig.tight_layout()
-			plt.savefig('coverage_vs_precision_clustering_{}.pdf'.format(resolution))
+			plt.savefig('figures/coverage_vs_precision_clustering_{}.pdf'.format(resolution))
 
 
 if __name__ == "__main__":
 	dm = Cluster_Domain_Parser()
+	print(dm.map_uid_to_service(('fe.apple-dns.net', 'p67-sharedstreams.icloud.com')))
+	print(dm.map_hr_str_to_keyword('p67-sharedstreams.icloud.com'))
 	print(dm.map_uid_to_service(('cdn2.onlyfans.com', 'cdn2.onlyfans.com')))
