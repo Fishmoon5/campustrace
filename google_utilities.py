@@ -31,6 +31,8 @@ def get_file_list(gdrive, parentid, name=None, orderby=None):
 		file_list = gdrive.ListFile(listdict).GetList()
 		return file_list
 	except:
+		import traceback
+		traceback.print_exc()
 		return []
 
 def download_file_by_id(gdrive, gid, dst, gdl=False):

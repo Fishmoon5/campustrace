@@ -1,5 +1,5 @@
 from domain_metrics import *
-
+### example I use in the text to explain BC distance
 building1 = np.array([.6,.4,0])
 building2 = np.array([0,.4,.6])
 building3 = np.array([.333,.333,.334])

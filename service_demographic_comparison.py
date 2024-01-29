@@ -9,12 +9,45 @@ from service_mapping import Service_Mapper
 class Service_Demographic_Comparison():
 	def __init__(self):
 		self.all_building_subnets = [
-			"160.39.40.128", "160.39.41.128", "160.39.61.128", "160.39.61.0", "160.39.62.192", "160.39.62.128", "160.39.62.0", "160.39.63.128", "160.39.63.64", "160.39.63.0", # grad students
+			"160.39.40.128", "160.39.41.128", "160.39.61.128", "160.39.61.0", # grad students
+			"160.39.62.192", "160.39.62.128", "160.39.62.0", "160.39.63.128", "160.39.63.64", "160.39.63.0", # grad students
 		    "160.39.2.0", # undergraduate students in the School of General Studies
 		    "160.39.41.0", "160.39.56.128", "160.39.59.0", # students, faculty and staff
 		    "128.59.122.128", "160.39.21.128", "160.39.22.0", "160.39.38.128", # postdocs, faculty and staff
-		    "160.39.22.128" # faculty and staff
+		    "160.39.22.128", "160.39.23.0", "160.39.31.128","160.39.32.0", "160.39.33.128", # faculty and staff
+		    "160.39.33.192", "160.39.33.64", "160.39.34.192", "160.39.35.0","160.39.35.64", "160.39.36.64", # faculty and staff
 		]
+		self.subnet_to_nunits = {
+			'160.39.40.128': 36,
+			'160.39.41.128': 24,
+			'160.39.61.128': 24,
+			'160.39.61.0': 53,
+			'160.39.62.192': 29,
+			'160.39.62.128': 24,
+			'160.39.62.0': 37,
+			"160.39.63.128": 23,
+			"160.39.63.64": 24,
+			"160.39.63.0": 23,
+			'160.39.2.0': 107,
+			"160.39.41.0": 34,
+			"160.39.56.128": 24,
+			"160.39.59.0": 55,
+			"128.59.122.128": 31,
+			"160.39.21.128": 23,
+			"160.39.22.0": 46,
+			"160.39.38.128": 65,
+			"160.39.22.128": 31,
+			"160.39.23.0": 25,
+		    "160.39.31.128": 27,
+		    "160.39.32.0": 25,
+		    "160.39.33.128": 25,
+		    "160.39.33.192": 25,
+		    "160.39.33.64": 45,
+		    "160.39.34.192": 23,
+		    "160.39.35.0": 45,
+		    "160.39.35.64": 23,
+		    "160.39.36.64": 9,
+		}
 
 	def temporal_representativity(self):
 		np.random.seed(31415)
@@ -26,60 +59,51 @@ class Service_Demographic_Comparison():
 
 
 			nunits = len(self.service_bytes_by_divider)
+			ndays = nunits
 			print("{} dividers total".format(nunits))
 			units = list(self.service_bytes_by_divider)
 
 			### Q: let x = global service average
 			## how does err(mean[included_set] - x) vary as we include more in the set?
+			if False:
+				nsim_atmost = 15
+				errs_over_n_sim = np.zeros((nsim_atmost, nunits-1))
+				for i in range(nsim_atmost):
+					ordering = np.arange(nunits)
+					np.random.shuffle(ordering)
+					current_average = self.domains_arr[ordering[0],:]
+					current_sum = self.domains_arr[ordering[0],:]
+					next_sum = current_sum.copy()
+					next_average = current_average.copy()
+					for j in range(nunits-1):
+						next_unit = ordering[j+1]
 
-			nsim_atmost = 200
-			errs_over_n_sim = np.zeros((nsim_atmost,nunits-1))
-			for i in range(nsim_atmost):
-				ordering = np.arange(nunits)
-				np.random.shuffle(ordering)
-				current_average = self.domains_arr[ordering[0],:]
-				current_sum = self.domains_arr[ordering[0],:]
-				next_sum = current_sum.copy()
-				next_average = current_average.copy()
-				for j in range(nunits-1):
-					next_unit = ordering[j+1]
+						next_sum += self.domains_arr[next_unit,:]
+						next_average = next_sum / np.sum(next_sum)
+						errs_over_n_sim[i,j] = 1-pdf_distance(current_average, next_average)
 
-					next_sum += self.domains_arr[next_unit,:]
-					next_average = next_sum / np.sum(next_sum)
-					errs_over_n_sim[i,j] = 1-pdf_distance(current_average, next_average)
+						current_sum = next_sum.copy()
+						current_average = next_average.copy()
+						# print(current_average[0:10])
+			else:
+				ndays = 30
+				nsim_atmost = np.maximum(nunits - ndays,1)
+				errs_over_n_sim = np.zeros((nsim_atmost, ndays))
+				for i in range(nsim_atmost):
+					ordering = np.arange(i,i+ndays)
+					current_average = self.domains_arr[ordering[0],:]
+					current_sum = self.domains_arr[ordering[0],:]
+					next_sum = current_sum.copy()
+					next_average = current_average.copy()
+					for j in range(ndays-1):
+						next_unit = ordering[j+1]
+						next_sum += self.domains_arr[next_unit,:]
+						next_average = next_sum / np.sum(next_sum)
+						errs_over_n_sim[i,j] = 1-pdf_distance(current_average, next_average)
 
-					current_sum = next_sum.copy()
-					current_average = next_average.copy()
-					# print(current_average[0:10])
+						current_sum = next_sum.copy()
+						current_average = next_average.copy()
 
-			print(errs_over_n_sim)
-
-			nsim_atmost = 15
-			errs_over_n_sim = {}
-			global_average = np.mean(self.domains_arr,axis=0).reshape(1,-1)
-
-			for nuniti in tqdm.tqdm(range(1,nunits),
-				desc="Predicting days from days."):
-				these_errs = []
-				allunits = np.arange(nunits)
-				sampled_already = {}
-
-				for iteri in range(nsim_atmost):
-					success = False
-					while not success:
-						unitset = sorted(random.sample(list(allunits), nuniti))
-						try:
-							sampled_already[tuple(unitset)]
-						except KeyError:
-							sampled_already[tuple(unitset)] = True
-							success = True
-
-					notunitset = get_difference(allunits, unitset)
-
-					pred = np.mean(self.domains_arr[np.array(unitset),:],axis=0).reshape(1,-1)
-					total_err = 1 - pdf_distance(pred,global_average)
-					these_errs.append(total_err)
-				errs_over_n_sim[nuniti] = these_errs
 			pickle.dump({
 				'errs_over_n_sim': errs_over_n_sim,
 				'nunits':nunits,
@@ -89,14 +113,11 @@ class Service_Demographic_Comparison():
 			errs_over_n_sim = d['errs_over_n_sim']
 			nunits = d['nunits']
 
-
-		plt_arr = {k: np.zeros(nunits-1) for k in ['min','med','max', 'std']}
-		for nuniti in range(1,nunits):
-			## min, med, max
-			plt_arr['min'][nuniti-1] = np.min(errs_over_n_sim[nuniti])
-			plt_arr['med'][nuniti-1] = np.median(errs_over_n_sim[nuniti])
-			plt_arr['max'][nuniti-1] = np.max(errs_over_n_sim[nuniti])
-			plt_arr['std'][nuniti-1] = np.sqrt(np.var(errs_over_n_sim[nuniti]))
+		plt_arr = {k: errs_over_n_sim.shape[1] for k in ['min','med','max', 'std']}
+		plt_arr['min'] = np.min(errs_over_n_sim, axis=0).flatten()
+		plt_arr['med'] = np.median(errs_over_n_sim,axis=0).flatten()
+		plt_arr['max'] = np.max(errs_over_n_sim,axis=0).flatten()
+		plt_arr['std'] = np.std(errs_over_n_sim,axis=0).flatten()
 
 		overall_max = np.max(plt_arr['max'])
 
@@ -105,8 +126,8 @@ class Service_Demographic_Comparison():
 		import matplotlib.pyplot as plt
 		f,ax = plt.subplots(1,1)
 		f.set_size_inches(12,6)
-		ax.plot(np.arange(1,nunits), plt_arr['med']/overall_max)
-		ax.fill_between(np.arange(1,nunits), (plt_arr['med'] - plt_arr['std'])/overall_max,
+		ax.plot(np.arange(1,len(plt_arr['med'])+1), plt_arr['med']/overall_max)
+		ax.fill_between(np.arange(1,len(plt_arr['med'])+1), (plt_arr['med'] - plt_arr['std'])/overall_max,
 			(plt_arr['med'] + plt_arr['std']) / overall_max, alpha=.3, color='red')
 		ax.grid(True)
 		ax.set_xlabel("Days for Comparison",fontsize=20)
@@ -116,73 +137,117 @@ class Service_Demographic_Comparison():
 
 	def unit_representativity(self, **kwargs):
 		np.random.seed(31415)
-		plt_cache_fn = os.path.join(CACHE_DIR, 'unit_representativity_plot_cache.pkl')
-		if not os.path.exists(plt_cache_fn):
-			# self.setup_service_by_unit_data()
-			self.setup_service_data(**kwargs)
-			self.service_bytes_by_divider = self.service_bytes_by_building
-			self.get_dist_mat('building', euclidean )
 
+		ordering_type = ['ordered','mixed']
+		nsims_atmost = {'mixed': 200, 'ordered': 10}
 
-			nunits = len(self.service_bytes_by_divider)
-			units = list(self.service_bytes_by_divider)
+		for ot in ordering_type:
+			plt_cache_fn = os.path.join(CACHE_DIR, 'unit_representativity_plot_cache_{}.pkl'.format(ot))
+			if not os.path.exists(plt_cache_fn):
+				# self.setup_service_by_unit_data()
+				self.setup_service_data(**kwargs)
+				self.service_bytes_by_divider = self.service_bytes_by_building
+				self.get_dist_mat('building', euclidean )
 
-			### Q: let x = global service average
-			## how does err(mean[included_set] - x) vary as we include more in the set?
+				nunits = len(self.service_bytes_by_divider)
+				units = list(self.service_bytes_by_divider)
 
-			nsim_atmost = 200
-			errs_over_n_sim = np.zeros((nsim_atmost,nunits-1))
-			for i in range(nsim_atmost):
-				ordering = np.arange(nunits)
-				np.random.shuffle(ordering)
-				current_average = self.domains_arr[ordering[0],:]
-				current_sum = self.domains_arr[ordering[0],:]
-				next_sum = current_sum.copy()
-				next_average = current_average.copy()
-				for j in range(nunits-1):
-					next_unit = ordering[j+1]
+				demo_u, tmp = [], {}
+				for c in self.cats_buildings:
+					try:
+						tmp[c] += 1
+					except KeyError:
+						demo_u.append(c)
+						tmp[c] = 1
+				demo_c = [tmp[du] for du in demo_u]
 
-					next_sum += self.domains_arr[next_unit,:]
-					next_average = next_sum / np.sum(next_sum)
-					errs_over_n_sim[i,j] = 1-pdf_distance(current_average, next_average)
+				### Q: let x = global service average
+				## how does err(mean[included_set] - x) vary as we include more in the set?
 
-					current_sum = next_sum.copy()
-					current_average = next_average.copy()
-					# print(current_average[0:10])
+				nsim_atmost = nsims_atmost[ot]
+				errs_over_n_sim = np.zeros((nsim_atmost,nunits-1))
+				nunits_over_sim = np.zeros((nsim_atmost,nunits-1))
+				for i in range(nsim_atmost):
+					ordering = np.arange(nunits)
+					if ot == 'mixed':
+						np.random.shuffle(ordering)
+					else:
+						ordering = []
+						cs = 0 # cumsum
+						for _u,_c in zip(demo_u,demo_c):
+							o = np.arange(cs,cs+_c)
+							np.random.shuffle(o)
+							ordering = ordering + list(o)
+							cs += _c
 
-			print(errs_over_n_sim)
+					current_average = self.domains_arr[ordering[0],:]
+					current_sum = self.domains_arr[ordering[0],:]
+					next_sum = current_sum.copy()
+					next_average = current_average.copy()
+					for j in range(nunits-1):
+						next_unit = ordering[j+1]
 
-			pickle.dump({
-				'errs_over_n_sim': errs_over_n_sim,
-				'nunits':nunits,
-				}, open(plt_cache_fn,'wb'))
-		else:
-			d = pickle.load(open(plt_cache_fn,'rb'))
-			errs_over_n_sim = d['errs_over_n_sim']
-			nunits = d['nunits']
+						next_sum += self.domains_arr[next_unit,:]
+						next_average = next_sum / np.sum(next_sum)
+						errs_over_n_sim[i,j] = 1-pdf_distance(current_average, next_average)
+						nunits_over_sim[i,j] = self.subnet_to_nunits[self.in_order_dividers['building'][next_unit]]
 
+						current_sum = next_sum.copy()
+						current_average = next_average.copy()
+						# print(current_average[0:10])
 
-		plt_arr = {k: np.zeros(nunits-1) for k in ['min','med','max', 'std']}
-		plt_arr['min'] = np.min(errs_over_n_sim, axis=0)
-		plt_arr['med'] = np.median(errs_over_n_sim,axis=0)
-		plt_arr['max'] = np.max(errs_over_n_sim,axis=0)
-		plt_arr['std'] = np.std(errs_over_n_sim,axis=0)
+				pickle.dump({
+					'errs_over_n_sim': errs_over_n_sim,
+					'nunits_over_sim': nunits_over_sim,
+					'nunits':nunits,
+					'demo_u': demo_u,
+					'demo_c': demo_c,
+					}, open(plt_cache_fn,'wb'))
+			else:
+				d = pickle.load(open(plt_cache_fn,'rb'))
+				errs_over_n_sim = d['errs_over_n_sim']
+				nunits_over_sim = d['nunits_over_sim']
+				nunits = d['nunits']
 
-		overall_max = np.max(plt_arr['max'])
+			plt_arr = {k: np.zeros(nunits-1) for k in ['min','med','max', 'std']}
+			plt_arr['min'] = np.min(errs_over_n_sim, axis=0)
+			plt_arr['med'] = np.median(errs_over_n_sim,axis=0)
+			plt_arr['max'] = np.max(errs_over_n_sim,axis=0)
+			plt_arr['std'] = np.std(errs_over_n_sim,axis=0)
 
-		import matplotlib
-		matplotlib.rcParams.update({'font.size': 18})
-		import matplotlib.pyplot as plt
-		f,ax = plt.subplots(1,1)
-		f.set_size_inches(12,6)
-		ax.plot(np.arange(1,nunits), plt_arr['med']/overall_max)
-		ax.fill_between(np.arange(1,nunits), (plt_arr['med'] - plt_arr['std'])/overall_max,
-			(plt_arr['med'] + plt_arr['std']) / overall_max, alpha=.3, color='red')
-		ax.grid(True)
-		ax.set_xlabel("Buildings Averaged Over",fontsize=20)
-		ax.set_ylabel("Normalized Median\nBhattacharyyar Distance",fontsize=20)
-		ax.set_ylim([0,1.0])
-		plt.savefig("figures/building_representativeness.pdf")
+			overall_max = np.max(plt_arr['max'])
+
+			nunits_x = np.median(np.cumsum(nunits_over_sim,axis=1), axis=0)
+
+			import matplotlib
+			matplotlib.rcParams.update({'font.size': 18})
+			import matplotlib.pyplot as plt
+			f,ax = plt.subplots(1,1)
+			f.set_size_inches(12,6)
+			ax.plot(nunits_x, plt_arr['med']/overall_max)
+			ax.fill_between(nunits_x, (plt_arr['med'] - plt_arr['std'])/overall_max,
+				(plt_arr['med'] + plt_arr['std']) / overall_max, alpha=.3, color='red')
+
+			if ot == 'ordered':
+				demo_u = d['demo_u']
+				demo_c = d['demo_c']
+				i=0
+				cs = 1
+				for u,c in zip(demo_u,demo_c):
+					print("{} {} {}".format(u,c,cs))
+					if cs >= len(nunits_x):
+						cs = -1
+					ax.axvline(nunits_x[cs-1],0,1)
+					ax.text(nunits_x[cs-1],.8-i*.1,u)
+
+					cs+=c
+					i+=1
+
+			ax.grid(True)
+			ax.set_xlabel("Units Averaged Over",fontsize=20)
+			ax.set_ylabel("Normalized Median\nBhattacharyyar Distance",fontsize=20)
+			ax.set_ylim([0,1.0])
+			plt.savefig("figures/building_representativeness-{}.pdf".format(ot))
 
 	def setup_activity_comparison_data(self, **kwargs):
 		### Want to build separator by activity measure
@@ -293,25 +358,25 @@ class Service_Demographic_Comparison():
 		plt.clf(); plt.close()
 
 
-	def setup_service_by_unit_data(self, **kwargs):
-		print("Setting up service by unit data...")
-		try:
-			self.all_services
-			return
-		except AttributeError:
-			pass
-		sm = Service_Mapper()
-		self.service_bytes_by_unit = sm.get_service_bytes_by_separator(by='unit', **kwargs)
+	# def setup_service_by_unit_data(self, **kwargs): ## NEVER USED AFAIK
+	# 	print("Setting up service by unit data...")
+	# 	try:
+	# 		self.all_services
+	# 		return
+	# 	except AttributeError:
+	# 		pass
+	# 	sm = Service_Mapper()
+	# 	self.service_bytes_by_unit = sm.get_service_bytes_by_separator(by='unit', **kwargs)
 
-		self.all_services = list(set(service for unit,services in self.service_bytes_by_unit.items()
-			 for service in services))
+	# 	self.all_services = list(set(service for unit,services in self.service_bytes_by_unit.items()
+	# 		 for service in services))
 
 
-		self.units = sorted(list(self.service_bytes_by_unit))
+	# 	self.units = sorted(list(self.service_bytes_by_unit))
 
-		self.in_order_dividers = {
-			'unit': self.units,
-		}
+	# 	self.in_order_dividers = {
+	# 		'unit': self.units,
+	# 	}
 
 	def setup_service_by_hour_data(self, **kwargs):
 		print("Setting up service by hour data...")
@@ -345,15 +410,31 @@ class Service_Demographic_Comparison():
 					self.bytes_by_service[s] += nb
 				except KeyError:
 					self.bytes_by_service[s] = nb
+		self.all_services = sorted(self.all_services, key = lambda s : -1*self.bytes_by_service[s])
+
+		# make_smaller = True
+		# if make_smaller:
+		# 	serv_bytes_arr = np.array([self.bytes_by_service[s] for s in self.all_services])
+		# 	cs_serv_bytes_arr = np.cumsum(serv_bytes_arr) / np.sum(serv_bytes_arr)
+		# 	cutoff = np.where(cs_serv_bytes_arr > .999)[0][0]
+		# 	self.all_services = self.all_services[0:cutoff]
+		# 	self.bytes_by_service = {s:self.bytes_by_service[s] for s in self.all_services}
+		# 	for divider in self.service_bytes_by_divider:
+		# 		for service in list(self.service_bytes_by_divider[divider]):
+		# 			try:
+		# 				self.bytes_by_service[service]
+		# 			except KeyError:
+		# 				del self.service_bytes_by_divider[divider][service]
+		# 	print("After limiting, {} dividers, {} services".format(n_dividers, len(self.all_services)))
 
 		for divider in list(self.service_bytes_by_divider):
 			services = list(self.service_bytes_by_divider[divider])
 			for not_inc_service in get_difference(self.all_services,services):
 				self.service_bytes_by_divider[divider][not_inc_service] = 0
 
-		self.all_services = sorted(self.all_services, key = lambda s : -1*self.bytes_by_service[s])
 		service_to_i = {service:i for i,service in enumerate(self.all_services)}
 		self.domains_arr = np.zeros((n_dividers, len(self.all_services)))
+		print(self.domains_arr.shape)
 		for divider,services in self.service_bytes_by_divider.items():
 			for service,nb in services.items():
 				self.domains_arr[divider_to_i[divider],service_to_i[service]] = nb
@@ -382,13 +463,27 @@ class Service_Demographic_Comparison():
 		else:
 			interesting_prints = []
 
-		for divideri in interesting_prints:
-			max_n = np.sum(self.domains_arr[divideri,:])
-			print("Divider {}".format(self.in_order_dividers[divider_type][divideri]))
-			for i in np.argsort(self.domains_arr[divideri,:])[::-1][0:25]:
-				print("{} -- {} {}".format(i,self.all_services[i],round(self.domains_arr[divideri,i]*100.0/max_n,4)))
-
-
+		if len(interesting_prints) > 0:
+			n_to_print = 100
+			with open(os.path.join(CACHE_DIR, 'exports', 'popularities-{}-{}.csv'.format(
+				divider_type, kwargs.get('service_or_type', 'service'))), 'w') as f:
+				f.write(",".join(self.in_order_dividers[divider_type]) + "\n")
+				write_arr = {}
+				for divideri in interesting_prints:
+					max_n = np.sum(self.domains_arr[divideri,:])
+					print("Divider {}".format(self.in_order_dividers[divider_type][divideri]))
+					for j,i in enumerate(np.argsort(self.domains_arr[divideri,:])[::-1][0:n_to_print]):
+						print("{} -- {} {}".format(i,self.all_services[i],round(self.domains_arr[divideri,i]*100.0/max_n,4)))
+						if type(self.all_services[i]) == tuple:
+							s = "--".join([str(el) for el in self.all_services[i]])
+						else:
+							s = self.all_services[i]
+						write_arr[j,divideri] = s + " ({} pct.)".format(round(self.domains_arr[divideri,i]*100.0/max_n,4))
+				for i in range(n_to_print):
+					try:
+						f.write(",".join([str(write_arr[i,j]) for j in range(len(self.in_order_dividers[divider_type]))]) + "\n")
+					except KeyError:
+						break
 		dist_mat = np.zeros((n_dividers,n_dividers))
 		from sympy.combinatorics.permutations import Permutation
 		for divideri in tqdm.tqdm(range(n_dividers),desc="Calculating distances..."):
@@ -418,21 +513,23 @@ class Service_Demographic_Comparison():
 		self.all_services = list(set(service for building,services in self.service_bytes_by_building.items()
 			 for service in services))
 
-		ncats,cats = [10,1,3,4,1],['grad','undergrad','gradfacstaff','pdocsfacstaff','facstaff']
+		### TODO -- make this more dynamic
+		# ncats,cats = [10,1,3,4,11],['grad','undergrad','gradfacstaff','pdocsfacstaff','facstaff']
+		ncats,cats = [11,3,4,11],['grad','gradfacstaff','pdocsfacstaff','facstaff']
 		cats = [c for i,c in enumerate(cats) for n in range(ncats[i]) ]
 		building_subnets = [b for b in self.all_building_subnets if b in self.service_bytes_by_building]
-		self.cats = [c for c,b in zip(cats, self.all_building_subnets) if b in self.service_bytes_by_building]
-
+		self.cats_buildings = [c for c,b in zip(cats, self.all_building_subnets) if b in self.service_bytes_by_building]
 
 		self.in_order_dividers = {
 			'building': building_subnets,
 			#'category': ['all traffic','grad','facstaff'], ### SHUYUE PRESENTATION
-			'category': ['grad','gradfacstaff','pdocsfacstaff','facstaff','all traffic'],
+			# 'category': ['grad','undergrad', 'gradfacstaff','pdocsfacstaff','facstaff','all traffic'], # without GS in grad
+			'category': ['grad', 'gradfacstaff','pdocsfacstaff','facstaff','all traffic'], # moved GS into grad
 		}
 
 		## aggregate to pseudo buildings, with each category being a building
 		self.service_bytes_by_category = {'all traffic': {}}
-		for bsnet,cat in zip(building_subnets,self.cats):
+		for bsnet,cat in zip(building_subnets,self.cats_buildings):
 			try:
 				self.service_bytes_by_category[cat]
 			except KeyError:
@@ -487,12 +584,13 @@ class Service_Demographic_Comparison():
 
 			def divideri_to_lab(divideri):
 				if divider_type == 'building':
-					return self.cats[divideri]
+					return self.cats_buildings[divideri]
 				else:
 
 					category = self.in_order_dividers['category'][divideri]
 					category_to_plot_label = {
 						'grad': "Graduate",
+						'undergrad': "Undergraduates",
 						'all traffic': "All Traffic",
 						'pdocsfacstaff': "Post-Docs &\nFaculty",
 						'gradfacstaff': "Graduate &\nFaculty",
@@ -535,13 +633,15 @@ class Service_Demographic_Comparison():
 		for metric,lab,axis_lab in zip(metrics,labs,ax_labs):
 			print("\n\n\nCOMPUTING METRIC {}\n\n\n".format(lab))
 			self.compare_building_domains(metric, n_doms=1000, plt_lab=lab, axis_lab=axis_lab, **kwargs)
-			self.compare_activity_measures(metric, plt_lab=lab, axis_lab=axis_lab, **kwargs)
+			# self.compare_activity_measures(metric, plt_lab=lab, axis_lab=axis_lab, **kwargs)
 			break
 
 if __name__ == "__main__":
 	sdc = Service_Demographic_Comparison()
-	# sdc.unit_representativity()
-	# sdc.temporal_representativity()
+	sdc.unit_representativity()
+	sdc = Service_Demographic_Comparison()
+	sdc.temporal_representativity()
+	sdc = Service_Demographic_Comparison()
 	sdc.crosswise_comparisons(service_or_type='service')
 	sdc = Service_Demographic_Comparison()
 	sdc.crosswise_comparisons(service_or_type='type')

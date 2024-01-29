@@ -24,7 +24,7 @@ class Domain_Parsing():
 		self.sevice_to_keywords, self.keyword_to_service = {}, {}
 		self.valid_priorities = {}
 		for row in open(os.path.join(CACHE_DIR, 'domain_keywords.txt'),'r'):
-			keyword,serviceid,priority = row.strip().split(',')
+			keyword,serviceid,priority,_ = row.strip().split(',')
 			self.keywords[keyword] = int(priority)
 			self.valid_priorities[int(priority)] = None
 			try:
@@ -45,10 +45,29 @@ class Domain_Parsing():
 					return kw
 		return None
 
-	def keyword_map_to_service(self, uid, verb=False):
-		domain, sni = uid
-		info = {}
+	def uid_to_struct(self, uid):
+		### Unify how we parse flow UIDs
+		if len(uid) == 2:
+			domain,sni = uid
+			dst_as = None
+			port = None
+			protocol = None
+		elif len(uid) == 5:
+			domain,sni,dst_as,port,protocol = uid
+		return {
+			'domain': domain,
+			'sni': sni,
+			'dst_as': dst_as, 
+			'port': port,
+			'protocol': protocol,
+		}
 
+	def keyword_map_to_service(self, uid, verb=False):
+		uid = self.uid_to_struct(uid)
+		domain = uid['domain']
+		sni = uid['sni']
+
+		info = {}
 		info['ignore'] = False
 
 		try:
@@ -83,11 +102,48 @@ class Domain_Parsing():
 			info['service'] = service
 			info['used_field'] = 'sni'
 			info['mapped_to_service'] = True
+			info['indicator'] = (domain,sni)
 		elif domain_map is not None:
 			service = self.keyword_to_service[domain_map]
 			info['service'] = service
 			info['used_field'] = 'domain'
 			info['mapped_to_service'] = True
+			info['indicator'] = (domain,sni)
+		elif uid['dst_as'] is not None and uid['protocol'] is not None and uid['port'] is not None:
+			## manual mapping of non-domain traffic
+			asn,protocol,port = uid['dst_as'], uid['protocol'],int(float(uid['port']))
+			
+			uf = 'asn,port,protocol'
+			##### Rules
+			service = None
+			if port >= 16393 and port <= 16402:
+				service = 'facetime'
+			elif asn == '714' and port >= 3478 and port <= 3497:
+				service = 'facetime'
+			elif asn == '32780': # cloud hosting company -- maybe investigate further?
+				pass
+			elif port == 51820:
+				service = 'wireguardvpn'
+			elif port == 3480 and asn == '8075':
+				service = 'msteams'
+			elif port == 3478 and asn == '15169':
+				service = 'googlemeet'
+			elif asn == '46489': # twitch's ASN
+				service = 'twitch'
+			elif asn == '32934' and port == 3478:
+				service = 'facebookmessenger'
+			elif asn == '49544':
+				service = 'ubisoft' # gaming
+			elif asn == '33353':
+				service = 'playstation'
+			elif port >= 6881 and port <= 6889:
+				service = 'bittorrent'
+
+			if service is not None:
+				info['service'] = service
+				info['used_field'] = uf
+				info['mapped_to_service'] = True
+				info['indicator'] = (asn,protocol,port)
 
 		return info
 
@@ -241,30 +297,34 @@ class Cluster_Domain_Parser(Domain_Parsing):
 		frequent_pairs.drop(columns=['total_occurrences_dns', 'total_occurrences_next', 'num_dns_not_appear'], inplace=True)
 
 		return frequent_pairs
-	
+
 	def parse_raw_flow_data(self, outfn):
-		# idk when final_flow_info is from. I think April
-		fs_to_read = list([os.path.join(DATA_DIR, fn) for fn in ['final_flow_info.csv', 'March23_flow_info_1.csv', 'March23_flow_info_2.csv']])
+		### This is a holdover from legacy code, really this doesn't really need to happen
+		# flow_data_files = ['April23_flow_info.csv', 'March23_flow_info_1.csv', 'March23_flow_info_2.csv']
+		flow_data_files = ['2024-1.tsv']
+		fs_to_read = list([os.path.join(DATA_DIR, 'flow_info',fn) for fn in flow_data_files])
 		with open(outfn, 'w') as outf:
-			outf.write("id,frame_time,frame_time_end,unit_ip,nbytes,dns_name\n")
+			outf.write("id,frame_time,frame_time_end,unit_ip,nbytes,dns_name,isTCP,port\n")
 			for f in fs_to_read:
 				i=0
-				for row in tqdm.tqdm(open(f,'r'), desc="Reading file : {}".format(f)):
-					if i ==0:
-						i+=1 
-						continue
-					fields = row.strip().split(',')
-					if len(fields) == 13:
-						uid,ts,te,unit_ip,ip,nbytes,dns_name,_,sni,_,_,_,_ = fields
-					else:
-						uid,ts,te,unit_ip,ip,nbytes,dns_name,_,sni,_ = fields
-					if dns_name == "" and sni == "": continue
-					dns_out = dns_name + UNIQUE_SEPARATOR_DOMAIN + sni
+				with open(f,'r') as fh:
+					# Todo -- make delimiter malleable 
+					csvr = csv.reader(fh, delimiter='\t', quotechar='"')
+					for row in tqdm.tqdm(csvr, desc="Reading file : {}".format(f)):
+						if i ==0:
+							i+=1 
+							continue
+						rowuid,ts,te,unit_ip,building_ip,ip,isTCP,nbytes,dns_name,dns_name_orig,sni,port = row
+						if dns_name == "" and sni == "": continue
+						dns_out = domain_to_domainstr(dns_name) + UNIQUE_SEPARATOR_DOMAIN + domain_to_domainstr(sni)
 
-					outf.write("{},{},{},{},{},{}\n".format(uid,ts,te,unit_ip,nbytes,dns_out))
+						outf.write("{},{},{},{},{},{}\n".format(rowuid,ts,te,unit_ip,nbytes,dns_out))
 
 	def lookup_cluster(self, uid):
-		service = self.uid_to_service_mapping.get(uid)
+		if len(uid) == 5:
+			service = self.uid_to_service_mapping.get((uid[0], uid[1]))
+		else:
+			service = self.uid_to_service_mapping.get(uid)
 		if service is None:
 			return self.keyword_map_to_service(uid)
 		info = {'ignore': False}
@@ -272,8 +332,10 @@ class Cluster_Domain_Parser(Domain_Parsing):
 		info['service'] = service
 		info['used_field'] = 'cluster'
 		info['mapped_to_service'] = True
+		info['indicator'] = (uid[0], uid[1])
 
 		return info
+
 
 	def map_uid_to_service(self, uid):
 		try:
@@ -289,7 +351,7 @@ class Cluster_Domain_Parser(Domain_Parsing):
 			domain_to_nbytes_fn = os.path.join(CACHE_DIR, "domain_to_nbytes.csv")
 			if not os.path.exists(correlated_traffic_cache_fn):
 				### 73M flows total
-				all_flows_fn = os.path.join(DATA_DIR, 'combine_data_service.csv')
+				all_flows_fn = os.path.join(CACHE_DIR, 'combine_data_service.csv')
 				if not os.path.exists(all_flows_fn):
 					self.parse_raw_flow_data(all_flows_fn)
 				self.all_flows = pd.read_csv(all_flows_fn)#, nrows=10000000)
@@ -395,18 +457,18 @@ class Cluster_Domain_Parser(Domain_Parsing):
 			total_volume_all_clusters = sum(list(cluster_to_volume.values()))
 			total_known_service_volume_all_clusters = sum(list(cluster_to_known_service_volume.values()))
 
-			important_clusters = sorted(cluster_to_volume.items(), key = lambda el : -1 * el[1])
-			i=0
-			for cid,v in important_clusters[0:40]:
-				i += 1
-				if max(list(cluster_id_to_known_service_pct[cid].values())) < .8: 
+			# important_clusters = sorted(cluster_to_volume.items(), key = lambda el : -1 * el[1])
+			# i=0
+			# for cid,v in important_clusters[0:40]:
+			# 	i += 1
+			# 	if max(list(cluster_id_to_known_service_pct[cid].values())) < .8: 
 
-					print("{}th largetst, {} -- {}".format(i, round(v/total_volume_all_clusters,2), clusters[cid]))
-					print(cluster_id_to_service_pct[cid])
-					# self.summarize_cluster_scores(domain_scores, clusters, cid)
+			# 		print("{}th largetst, {} -- {}".format(i, round(v/total_volume_all_clusters,2), clusters[cid]))
+			# 		print(cluster_id_to_service_pct[cid])
+			# 		self.summarize_cluster_scores(domain_scores, clusters, cid)
 			# 		if np.random.random() > .9:
 			# 			exit(0)
-				print("\n\n")
+			# 	print("\n\n")
 			# exit(0)
 			
 

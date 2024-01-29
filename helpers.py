@@ -19,6 +19,7 @@ def domain_to_domainstr(s):
 		domain_str = ".".join(significant_domain_els)
 	else:
 		domain_str = s
+	domain_str = domain_str.replace(",","")
 	return domain_str
 
 def fe_to_pop_converter(fe_to_loc, threshold = 150):
