@@ -301,7 +301,7 @@ class Cluster_Domain_Parser(Domain_Parsing):
 	def parse_raw_flow_data(self, outfn):
 		### This is a holdover from legacy code, really this doesn't really need to happen
 		# flow_data_files = ['April23_flow_info.csv', 'March23_flow_info_1.csv', 'March23_flow_info_2.csv']
-		flow_data_files = ['2024-1.tsv']
+		flow_data_files = ['2024-01.tsv']
 		fs_to_read = list([os.path.join(DATA_DIR, 'flow_info',fn) for fn in flow_data_files])
 		with open(outfn, 'w') as outf:
 			outf.write("id,frame_time,frame_time_end,unit_ip,nbytes,dns_name,isTCP,port\n")
