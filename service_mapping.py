@@ -6,6 +6,8 @@ from helpers import *
 from domain_parsing import Domain_Parsing, Cluster_Domain_Parser
 from traceroute_analyzer import Campus_Measurement_Analyzer
 
+INCLUDE_UNKNOWN = False
+
 class Service_Mapper(Campus_Measurement_Analyzer):
 	def __init__(self):
 		super().__init__()
@@ -164,7 +166,7 @@ class Service_Mapper(Campus_Measurement_Analyzer):
 					protocol = 'tcp' if isTCP == 'True' else 'udp'
 					dst_as = self.cma.parse_asn(ip)
 
-					if port == '': 
+					if port == '':
 						port = None
 						protocol = None
 					uid = (domain,sni,dst_as,port,protocol)
@@ -196,6 +198,23 @@ class Service_Mapper(Campus_Measurement_Analyzer):
 						self.domain_sni_uids_by_hour_bytes[hour][uid] += float(nb)
 					except KeyError:
 						self.domain_sni_uids_by_hour_bytes[hour][uid] = float(nb)
+
+
+					if np.random.random() > .9999:
+						print("Cleaning arrays...")
+						## Get rid of 1-off flows
+						to_del_uids = list(set([(building, uid) for building in self.domain_sni_uids_by_building_flows
+							for uid, v in self.domain_sni_uids_by_building_flows[building].items() if v == 1]))
+						for building,uid in to_del_uids:
+							del self.domain_sni_uids_by_building_bytes[building][uid]
+							del self.domain_sni_uids_by_building_flows[building][uid]
+							del self.domain_sni_uids_by_building_time[building][uid]
+						to_del_uids = list(set([(hour, uid) for hour in self.domain_sni_uids_by_hour_bytes
+							for uid, v in self.domain_sni_uids_by_hour_bytes[hour].items() if v == 1]))
+						for hour,uid in to_del_uids:
+							del self.domain_sni_uids_by_hour_bytes[hour][uid]
+					if np.random.random() > .999999:break
+
 
 	def load_not_done_domains(self):
 		"""Loads domains seen in campus network traces."""
@@ -281,13 +300,11 @@ class Service_Mapper(Campus_Measurement_Analyzer):
 		by_measure_cache_fn = os.path.join(CACHE_DIR, 'by_activity_measure_cache.pkl')
 		if not os.path.exists(by_measure_cache_fn):
 			self.get_service_bytes_by_separator()
-			service_to_time = pickle.load(open(os.path.join(CACHE_DIR, 
-				'destinations_to_services.pkl'),'rb'))['service_to_time']
 			by_measure = {
 				'dns_responses': {},
 				'bytes': {},
 				'flows': {},
-				'time': service_to_time,
+				'time': {},
 			}
 			for arr,activity_type in zip([self.domain_sni_uids_by_building_bytes,
 				self.domain_sni_uids_by_building_flows,
@@ -301,25 +318,26 @@ class Service_Mapper(Campus_Measurement_Analyzer):
 						except KeyError:
 							by_measure[activity_type][service] = n
 			da = Domain_Parsing(popular_domains = self.popular_domains)
-			for row in tqdm.tqdm(open(os.path.join(DATA_DIR, 'building_service_ndns.csv'),'r'),
-				desc="Loading dns response counts..."):
-				try:
-					flow_uid,building,domain,n = row.strip().split(',')
-				except ValueError:
-					continue
-				if flow_uid == "": continue
-				if domain == "": continue
-				uid = (domain, "", None, None, None)
-				info = self.map_to_service(uid)
-				if info['ignore']: continue
-				if info['mapped_to_service']:
-					service = info['service']
-				else:
-					service = uid
-				try:
-					by_measure['dns_responses'][service] += float(n)
-				except KeyError:
-					by_measure['dns_responses'][service] = float(n)
+			with open(os.path.join(DATA_DIR, '2024-01-dns-activity.tsv'),'r') as f:
+				csvr = csv.reader(f, delimiter='\t', quotechar='"')
+				for row in tqdm.tqdm(csvr, desc="Loading dns response counts..."):
+					try:
+						flow_uid,building,domain,n = row
+					except ValueError:
+						continue
+					if flow_uid == "": continue
+					if domain == "": continue
+					uid = (domain, "", None, None, None)
+					info = self.map_to_service(uid)
+					if info['ignore']: continue
+					if info['mapped_to_service']:
+						service = info['service']
+					else:
+						service = uid
+					try:
+						by_measure['dns_responses'][service] += float(n)
+					except KeyError:
+						by_measure['dns_responses'][service] = float(n)
 
 			pickle.dump(by_measure, open(by_measure_cache_fn,'wb'))
 		else:
@@ -332,6 +350,7 @@ class Service_Mapper(Campus_Measurement_Analyzer):
 				by_service_type[k] = {}
 				for service,nb in by_measure[k].items():
 					service_type = self.service_to_service_type.get(service,'unknown')
+					if service_type == 'unknown' and not INCLUDE_UNKNOWN: continue
 					try:
 						by_service_type[k][service_type] += nb
 					except KeyError:
@@ -366,6 +385,7 @@ class Service_Mapper(Campus_Measurement_Analyzer):
 				by_service_type[k] = {}
 				for service,nb in service_bytes_by_separator[k].items():
 					service_type = self.service_to_service_type.get(service,'unknown')
+					if service_type == 'unknown' and not INCLUDE_UNKNOWN: continue
 					try:
 						by_service_type[k][service_type] += nb
 					except KeyError:
