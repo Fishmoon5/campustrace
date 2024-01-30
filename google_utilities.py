@@ -1,6 +1,7 @@
 import os
 from pydrive.drive import GoogleDrive
 from pydrive.auth import GoogleAuth
+from subprocess import call
 
 ## from here https://github.com/Fishmoon5/autofetch_gdrive
 
@@ -39,7 +40,7 @@ def download_file_by_id(gdrive, gid, dst, gdl=False):
 	''' force write if exists'''
 	if gdl:
 		dirname = os.path.dirname(dst)
-		os.system(f'gdl -q -o -d {dirname} {gid}')
+		call(f'gdl -q -o -d {dirname} {gid}', shell=True)
 	else:
 		downloaded = gdrive.CreateFile({'id': gid}) # adding 'title' parameter does not actually change the title
 		downloaded.GetContentFile(dst)

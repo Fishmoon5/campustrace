@@ -145,7 +145,8 @@ class Service_Mapper(Campus_Measurement_Analyzer):
 	def load_all_domain_sni_uids(self, **kwargs):
 		try:
 			self.domain_sni_uids
-			return
+			if not kwargs.get('force_load', False):
+				return
 		except AttributeError:
 			pass
 		self.domain_sni_uids = {}
@@ -153,6 +154,11 @@ class Service_Mapper(Campus_Measurement_Analyzer):
 		self.domain_sni_uids_by_building_flows = {}
 		self.domain_sni_uids_by_building_time = {}
 		self.domain_sni_uids_by_hour_bytes = {}
+		# n_every_delete = int(10e6)
+		# p_delete = 1 - 1 / float(n_every_delete)
+		# pct_delete = .1
+		# n_delete = int(pct_delete * n_every_delete / 100)
+		# print("Deleting UIDs with less than {} entries every {}M iters".format(n_delete, round(n_every_delete/1e6,1)))
 		fns = kwargs.get('months_of_interest', ['2024-01'])
 		for fn in fns:
 			with open(os.path.join(DATA_DIR, 
@@ -198,23 +204,6 @@ class Service_Mapper(Campus_Measurement_Analyzer):
 						self.domain_sni_uids_by_hour_bytes[hour][uid] += float(nb)
 					except KeyError:
 						self.domain_sni_uids_by_hour_bytes[hour][uid] = float(nb)
-
-
-					if np.random.random() > .9999:
-						print("Cleaning arrays...")
-						## Get rid of 1-off flows
-						to_del_uids = list(set([(building, uid) for building in self.domain_sni_uids_by_building_flows
-							for uid, v in self.domain_sni_uids_by_building_flows[building].items() if v == 1]))
-						for building,uid in to_del_uids:
-							del self.domain_sni_uids_by_building_bytes[building][uid]
-							del self.domain_sni_uids_by_building_flows[building][uid]
-							del self.domain_sni_uids_by_building_time[building][uid]
-						to_del_uids = list(set([(hour, uid) for hour in self.domain_sni_uids_by_hour_bytes
-							for uid, v in self.domain_sni_uids_by_hour_bytes[hour].items() if v == 1]))
-						for hour,uid in to_del_uids:
-							del self.domain_sni_uids_by_hour_bytes[hour][uid]
-					if np.random.random() > .999999:break
-
 
 	def load_not_done_domains(self):
 		"""Loads domains seen in campus network traces."""
@@ -644,31 +633,46 @@ class Service_Mapper(Campus_Measurement_Analyzer):
 
 		## First, parse everything for shuyues time of interest
 		# (add dec/22 - may/23 when they're available)
+		import glob
 		months_of_interest = ['2022-12', '2023-01','2023-02',
 			'2023-03','2023-04', '2023-05', '2023-06', '2023-07', 
 			'2023-11', '2023-12', '2024-01']
-		kwargs = {}
-		kwargs['months_of_interest'] = months_of_interest
-		save_cache_fn = os.path.join(CACHE_DIR, 'domain_sni_to_service_cache_shuyue_all_months.pkl')
-		kwargs['save_cache_fn'] = save_cache_fn
-		self.compute_domains_to_services(**kwargs)
+		all_cache_fns = glob.glob(os.path.join(CACHE_DIR, 'domain_sni_to_service_cache_shuyue_all_months-*.pkl'))
+		months_of_interest = [m for m in months_of_interest if not any(m in fn for fn in all_cache_fns)]
+		n_per_iter = 1
+		n_chunks = int(np.ceil(len(months_of_interest) / n_per_iter))
+		month_chunks = split_seq(sorted(months_of_interest), n_chunks)
+		out_fn = os.path.join(CACHE_DIR,'exports','domain_to_service_data_for_shuyue.csv')
+		if not os.path.exists(out_fn):
+			with open(out_fn, 'w') as f:
+				f.write("domain,sni,dst_as,port,protocol,service,servicetype\n")
+		for month_chunk in month_chunks:
+			month_chunk = sorted(month_chunk)
+			kwargs = {}
+			kwargs['force_load'] = True
+			kwargs['months_of_interest'] = month_chunk
+			months_str = "&".join(month_chunk)
+			print("Parsing months : {}".format(month_chunk))
+			save_cache_fn = os.path.join(CACHE_DIR, 'domain_sni_to_service_cache_shuyue_all_months-{}.pkl'.format(months_str))
+			kwargs['save_cache_fn'] = save_cache_fn
+			self.compute_domains_to_services(**kwargs)
 
-		cache = pickle.load(open(save_cache_fn, 'rb'))
+			cache = pickle.load(open(save_cache_fn, 'rb'))
 
-		self.domain_sni_to_service = cache['domain_sni_to_service']
-		known_services = {s:None for s in self.service_to_service_type}
+			self.domain_sni_to_service = cache['domain_sni_to_service']
+			known_services = {s:None for s in self.service_to_service_type}
 
-		with open(os.path.join(CACHE_DIR,'exports','domain_to_service_data_for_shuyue.csv'),'w') as f:
-			f.write("domain,sni,dst_as,port,protocol,service,servicetype\n")
-			for uid,service in self.domain_sni_to_service.items():
-				domain,sni,dst_as,port,protocol = uid
-				try:
-					known_services[service]
-				except KeyError:
-					service = "unknown"
-				service_type = self.service_to_service_type.get(service,"unknown")
-				f.write("{},{},{},{},{},{},{}\n".format(domain,sni,dst_as,port,protocol,
-					service,service_type))
+			
+			with open(out_fn,'a') as f:
+				for uid,service in self.domain_sni_to_service.items():
+					domain,sni,dst_as,port,protocol = uid
+					try:
+						known_services[service]
+					except KeyError:
+						service = "unknown"
+					service_type = self.service_to_service_type.get(service,"unknown")
+					f.write("{},{},{},{},{},{},{}\n".format(domain,sni,dst_as,port,protocol,
+						service,service_type))
 
 	def fetch_domains(self):
 		try:
