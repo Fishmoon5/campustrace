@@ -46,4 +46,7 @@ def run_pipeline():
 	call("rm {}".format(targets_fn),shell=True)
 
 if __name__ == "__main__":
+	### Need to run sudo conduct_traceroutes first
+
+	## need to run with sudo
 	run_pipeline()

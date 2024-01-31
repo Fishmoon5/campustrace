@@ -30,8 +30,8 @@ class Traceroute_Conductor:
 				for t in targets_set:
 					f.write(t + "\n")
 			scamp_cmd = 'scamper -c "trace -w 2" -M {}'\
-				' -l peering_interfaces -f {} -O warts -o {} -p 10000'.format(self.trace_msg, 
-					targets_fn, outfn + str(i))
+				' -l peering_interfaces -O warts -o {} -p 10000 -f {} '.format(self.trace_msg, 
+					outfn + str(i), targets_fn)
 			call(scamp_cmd, shell=True)
 
 	def _ping(self, outfn):
@@ -46,8 +46,8 @@ class Traceroute_Conductor:
 				for t in targets_set:
 					f.write(t + "\n")
 			scamp_cmd = 'scamper -c "ping -c 3" -M {}'\
-				' -l peering_interfaces -f {} -O warts -o {} -p 10000'.format(self.trace_msg, 
-					targets_fn, outfn + str(i))
+				' -l peering_interfaces -O warts -o {} -p 10000 -f {}'.format(self.trace_msg, 
+					outfn + str(i), targets_fn)
 			call(scamp_cmd, shell=True)
 
 	def load_targets(self):
@@ -104,6 +104,7 @@ class Traceroute_Conductor:
 				measurement_obj = json.loads(meas_str)
 				if measurement_obj['type'] != 'trace': continue
 				parsed_obj = cma.parse_ripe_trace_result(measurement_obj)
+				if parsed_obj is None: continue
 				if parsed_obj['reached_dst_network']:
 					good_targets[parsed_obj['dst']] = None
 				# else:

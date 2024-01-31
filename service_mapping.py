@@ -629,6 +629,39 @@ class Service_Mapper(Campus_Measurement_Analyzer):
 			self.domain_sni_uids_by_building_time = cache['domain_sni_uids_by_building_time']
 			self.domain_sni_uids_by_hour_bytes = cache['domain_sni_uids_by_hour_bytes']
 
+	def look_at_akamai(self):
+		asns_of_interest = {k:{} for k in [None, '3630', '3754', '3756', '3629', '20940']}
+		total_bts, interesting_bts = 0,0
+		for row in tqdm.tqdm(open(os.path.join(DATA_DIR, 'flow_info', '2024-01.tsv')),
+			desc="Parsing flow data..."):
+			fields = row.strip().split('\t')
+			if fields[0] == 'frame_time': continue
+			dst_ip = fields[5]
+			dst_as = self.cma.parse_asn(dst_ip)
+			bts = float(fields[7])
+			total_bts += bts
+			try:
+				asns_of_interest[dst_as]
+			except KeyError:
+				continue
+			try:
+				asns_of_interest[dst_as][dst_ip] += bts
+			except KeyError:
+				asns_of_interest[dst_as][dst_ip] = bts
+			interesting_bts += bts
+			# if np.random.random() > .999999:break
+		pickle.dump([total_bts, interesting_bts,asns_of_interest], open('tmp.pkl','wb'))
+		for dst_as in asns_of_interest:
+			print("DST AS : {}".format(dst_as))
+			for ip,bts in sorted(asns_of_interest[dst_as].items(), key = lambda el : -1 * el[1])[0:100]:
+				print("{} -- ({} pct total, {} pct interesting)".format(ip,
+					round(bts*100/total_bts,4), round(bts*100/interesting_bts,2)))
+		total_bts,interesting_bts,asns_of_interest = pickle.load(open('tmp.pkl','rb'))
+		print(round(sum(list(asns_of_interest['3630'].values())) * 100 / interesting_bts, 2))
+		print("Akamai has {} IPs, {} pct. of interesting volume".format(len(asns_of_interest['20940']),
+			round(sum(list(asns_of_interest['20940'].values())) * 100 / interesting_bts, 2)))
+
+	
 	def output_service_data_for_shuyue(self):
 
 		## First, parse everything for shuyues time of interest
@@ -700,7 +733,8 @@ class Service_Mapper(Campus_Measurement_Analyzer):
 
 if __name__ == "__main__":
 	sm = Service_Mapper()
-	sm.output_service_data_for_shuyue()
+	# sm.output_service_data_for_shuyue()
+	sm.look_at_akamai()
 	# sm.classify_traffic_types_high_level_small()
 	# sm.investigate_service_mapping()
 	# sm.classify_traffic_types_high_level_small()

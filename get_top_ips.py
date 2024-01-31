@@ -1,6 +1,6 @@
 from google_utilities import *
 
-def get_top_ips(parentid, filename='topips_buildingip_inbytes_outbytes.txt'):
+def get_top_ips_old(parentid, filename='topips_buildingip_inbytes_outbytes.txt'):
     '''
     Return a list of IPs, ordered by the number of bytes being sent to and from.
     '''
@@ -16,6 +16,32 @@ def get_top_ips(parentid, filename='topips_buildingip_inbytes_outbytes.txt'):
             except KeyError:
                 ips[ip] = 0
             ips[ip] += (float(nin) + float(nout))
+    return ips
+
+def get_top_ips(parentid, filename='data/flow_info/2024-01.tsv'):
+    import numpy as np, tqdm
+    ips = {}
+    with open(filename, 'r') as file:
+        for row in tqdm.tqdm(file,desc="Finding IPs to probe"):
+            fields = row.strip().split('\t')
+            if fields[0] == "frame_time": continue
+            try:
+                ips[fields[5]] += float(fields[7])
+            except KeyError:
+                ips[fields[5]] = float(fields[7])
+
+    ### Keep 99.9% of volume
+    all_v = sum(list(ips.values()))
+    sorted_ks = list(sorted(ips.items(), key = lambda el : -1 * el[1]))
+    sorted_vs = np.array([el[1] for el in sorted_ks])
+    cs_v = np.cumsum(sorted_vs) / all_v
+    keep_upto = np.where(cs_v > .999)[0][0]
+    sorted_ks = sorted_ks[0:keep_upto]
+    print("Keeping {} out of {} targets".format(keep_upto, len(ips)))
+
+    new_ips = {k[0]:ips[k[0]] for k in sorted_ks}
+
+
     return ips
 
 if __name__ == "__main__":
