@@ -63,8 +63,8 @@ class Service_Demographic_Comparison():
 		if not os.path.exists(plt_cache_fn):
 			self.setup_service_by_hour_data()
 			self.service_bytes_by_divider = self.service_bytes_by_hour
-			self.get_dist_mat('hour', euclidean )
-
+			# self.get_dist_mat('hour', euclidean )
+			self.get_domains_arr('hour')
 
 			nunits = len(self.service_bytes_by_divider)
 			ndays = nunits
@@ -280,8 +280,6 @@ class Service_Demographic_Comparison():
 	def compare_activity_measures(self, metric, **kwargs):
 		self.setup_activity_comparison_data(**kwargs)
 		divider_type = 'activity_measure'
-
-#####TODO: could do time a single flow to the service is active
 		print("\n\n-----DIVIDING BY TYPE {}------".format(divider_type))
 
 		service_bytes_by_divider = self.activity_by_service
@@ -390,11 +388,7 @@ class Service_Demographic_Comparison():
 			'hour': sorted(self.hours),
 		}
 
-	def get_dist_mat(self, divider_type, metric, **kwargs):
-		print("Computing distance matrix...")
-		divider_to_i = {divider:i for i,divider in enumerate(self.in_order_dividers[divider_type])}
-		n_dividers = len(self.service_bytes_by_divider)
-		print("{} dividers, {} services".format(n_dividers, len(self.all_services)))
+	def get_domains_arr(self, divider_type):
 		self.bytes_by_service = {}
 		for div in self.service_bytes_by_divider:
 			for s,nb in self.service_bytes_by_divider[div].items():
@@ -403,50 +397,29 @@ class Service_Demographic_Comparison():
 				except KeyError:
 					self.bytes_by_service[s] = nb
 		self.all_services = sorted(self.all_services, key = lambda s : -1*self.bytes_by_service[s])
-
-		# make_smaller = True
-		# if make_smaller:
-		# 	serv_bytes_arr = np.array([self.bytes_by_service[s] for s in self.all_services])
-		# 	cs_serv_bytes_arr = np.cumsum(serv_bytes_arr) / np.sum(serv_bytes_arr)
-		# 	cutoff = np.where(cs_serv_bytes_arr > .999)[0][0]
-		# 	self.all_services = self.all_services[0:cutoff]
-		# 	self.bytes_by_service = {s:self.bytes_by_service[s] for s in self.all_services}
-		# 	for divider in self.service_bytes_by_divider:
-		# 		for service in list(self.service_bytes_by_divider[divider]):
-		# 			try:
-		# 				self.bytes_by_service[service]
-		# 			except KeyError:
-		# 				del self.service_bytes_by_divider[divider][service]
-		# 	print("After limiting, {} dividers, {} services".format(n_dividers, len(self.all_services)))
-
-		for divider in list(self.service_bytes_by_divider):
-			services = list(self.service_bytes_by_divider[divider])
-			for not_inc_service in get_difference(self.all_services,services):
-				self.service_bytes_by_divider[divider][not_inc_service] = 0
-
 		service_to_i = {service:i for i,service in enumerate(self.all_services)}
+		n_dividers = len(self.service_bytes_by_divider)
+		divider_to_i = {divider:i for i,divider in enumerate(self.in_order_dividers[divider_type])}
 		self.domains_arr = np.zeros((n_dividers, len(self.all_services)))
 		print(self.domains_arr.shape)
 		for divider,services in self.service_bytes_by_divider.items():
 			for service,nb in services.items():
 				self.domains_arr[divider_to_i[divider],service_to_i[service]] = nb
-		
-		traffic_by_service = np.sum(self.domains_arr,axis=0)
-		global_domain_traffic = np.sort(traffic_by_service)[::-1]
-		ttl_traffic = np.sum(global_domain_traffic)
-		global_domain_traffic = global_domain_traffic / ttl_traffic
-		global_domain_traffic_dict = {i:traffic_by_service[i] / ttl_traffic for i in range(len(traffic_by_service))}
-		kwargs['global_domain_traffic'] = global_domain_traffic
-		kwargs['global_domain_traffic_dict'] = global_domain_traffic_dict
 
 		nb_by_divider = np.sum(self.domains_arr,axis=1)
 		self.domains_arr = self.domains_arr / nb_by_divider.reshape((-1,1))
-		nb_by_divider = nb_by_divider / np.max(nb_by_divider.flatten())
 
-		# print(self.domains_arr[:,0:10])
-		# exit(0)
+	def get_dist_mat(self, divider_type, metric, **kwargs):
+		print("Computing distance matrix...")
+		n_dividers = len(self.service_bytes_by_divider)
+		print("{} dividers, {} services".format(n_dividers, len(self.all_services)))
 
-
+		for divider in list(self.service_bytes_by_divider):
+			services = list(self.service_bytes_by_divider[divider])
+			for not_inc_service in get_difference(self.all_services,services):
+				self.service_bytes_by_divider[divider][not_inc_service] = 0
+		self.get_domains_arr(divider_type)
+		
 
 		if divider_type == 'building':
 			interesting_prints = []
@@ -589,7 +562,7 @@ class Service_Demographic_Comparison():
 			import matplotlib.pyplot as plt
 			service_or_type = kwargs.get('service_or_type', 'service')
 			if service_or_type == 'service':
-				n_to_plot = 1000
+				n_to_plot = 100
 				f,ax = plt.subplots(1,1)
 				f.set_size_inches(12,4)
 				linestyles=['-', '-.', ':','--']
@@ -598,20 +571,45 @@ class Service_Demographic_Comparison():
 				# for i,lab in enumerate(ordering):
 					# divideri = np.where(np.array(cats)==lab)[0][0]
 
+				serv_to_lab = {
+					'youtube': "Youtube",
+					'icloud': 'iCloud',
+					'primevideo': "PrimeVideo",
+					'netflix': 'Netflix',
+					'instagram': 'Instagram',
+					'applestore': 'Apple Store',
+					'steam': 'Steam',
+					'tiktok': 'TikTok',
+					'hulu': 'Hulu'
+				}
 				for divideri in range(self.domains_arr.shape[0]):
 					ax.semilogx(np.arange(1,n_to_plot+1), self.domains_arr[divideri,0:n_to_plot]*100.0,
 						label=divideri_to_lab(divideri),linestyle=linestyles[divideri])
+					if divideri_to_lab(divideri) == 'All Traffic':
+						for i in range(8):
+							yloc = ((-1)**i - 1) * 1 + self.domains_arr[divideri,i]*100
+							if i == 0:
+								xloc = 1
+							elif i <= 4:
+								xloc = i+1
+							else:
+								xloc = i+2
+							print("{} {} {}".format(xloc,yloc,serv_to_lab.get(self.all_services[i])))
+							ax.text(xloc,yloc,serv_to_lab.get(self.all_services[i]),fontsize=16)
+
+
 				ax.set_xlabel("Overall Service Traffic Volume Contribution Rank")
 				ax.set_ylabel("Percent of Total Traffic Volume")
-				ax.set_xticks([1,10,100,1000])
-				ax.set_xticklabels(['1','10','100','1000'])
+				ax.set_xticks([1,10,100])
+				ax.set_xticklabels(['1','10','100'])
 				ax.set_ylim([0,15])
-				ax.set_xlim([1,n_to_plot])
+				ax.set_xlim([.9,n_to_plot])
 
 				ax.legend()
 				plt.savefig('figures/similarities_across_{}_{}_topn-{}.pdf'.format(
 					divider_type, kwargs.get('plt_lab',''), service_or_type),
 					bbox_inches='tight')
+				exit(0)
 
 				plt.clf(); plt.close()
 			n_dividers = len(self.service_bytes_by_divider)
@@ -664,7 +662,7 @@ class Service_Demographic_Comparison():
 		for metric,lab,axis_lab in zip(metrics,labs,ax_labs):
 			print("\n\n\nCOMPUTING METRIC {}\n\n\n".format(lab))
 			self.compare_building_domains(metric, n_doms=1000, plt_lab=lab, axis_lab=axis_lab, **kwargs)
-			self.compare_activity_measures(metric, plt_lab=lab, axis_lab=axis_lab, **kwargs)
+			# self.compare_activity_measures(metric, plt_lab=lab, axis_lab=axis_lab, **kwargs)
 			break
 
 if __name__ == "__main__":
@@ -674,6 +672,6 @@ if __name__ == "__main__":
 	# sdc.temporal_representativity()
 	sdc = Service_Demographic_Comparison()
 	sdc.crosswise_comparisons(service_or_type='service')
-	sdc = Service_Demographic_Comparison()
-	sdc.crosswise_comparisons(service_or_type='type')
+	# sdc = Service_Demographic_Comparison()
+	# sdc.crosswise_comparisons(service_or_type='type')
 

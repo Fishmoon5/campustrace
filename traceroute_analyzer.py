@@ -278,7 +278,7 @@ class Campus_Measurement_Analyzer:
 		rtts_cache_fn = os.path.join(CACHE_DIR, 'rtts.pkl')
 		if not os.path.exists(rtts_cache_fn):
 			targ_to_rtt =  {}
-			times_of_interest = ['1684980072']
+			times_of_interest = ['1706715933']
 			all_ping_files = glob.glob(os.path.join(MEASUREMENT_DIR, 'pings-*.json'))
 			all_ping_files = [ping_file for ping_file in all_ping_files if any(toi in ping_file for toi in times_of_interest)]
 
@@ -602,7 +602,6 @@ class Campus_Measurement_Analyzer:
 		# ax[1].legend()
 		plt.savefig('figures/all_aspls.pdf')
 
-
 	def aspl_from_bgp_routes(self):
 		np.random.seed(31415)
 		cdf_aspl_cache_fn = os.path.join(CACHE_DIR, 'aspl_cdfs_from_cu.pkl')
@@ -699,6 +698,7 @@ class Campus_Measurement_Analyzer:
 				pickle.dump({
 					"asp_campus": asps, 
 					"aspl_campus": aspls, 
+					"as_paths_by_pref":as_paths_by_pref,
 					"all_objs_campus": all_objs,
 					"asp_whole_internet": asps_whole_internet,
 					"aspl_whole_internet": aspls_whole_internet,
@@ -864,7 +864,6 @@ class Campus_Measurement_Analyzer:
 		# ax[1].legend()
 		plt.savefig('figures/all_aspls_from_cu.pdf')
 
-
 	def sync_results(self):
 		parent_id = traceroute_meas_folder_id
 		have_results = [el.split('.')[0] for el in os.listdir(MEASUREMENT_DIR)]
@@ -872,7 +871,8 @@ class Campus_Measurement_Analyzer:
 		files = get_file_list(gdrive, parent_id)
 
 
-		times_of_interest = ['1684845466','1684980072']
+		# times_of_interest = ['1684845466','1684980072']
+		times_of_interest = ['1706715933']
 
 
 		for fn in tqdm.tqdm(files,desc="Downloading files from cloud."):
@@ -900,11 +900,74 @@ class Campus_Measurement_Analyzer:
 			call("rm {}".format(dlfn),shell=True)
 
 
+	def next_hops_from_bgp_routes(self):
+		np.random.seed(31415)
+		self.load_traceroute_helpers()
+		import pytricia
+		as_paths_by_pref = pytricia.PyTricia()
+		pref = None
+		for row in tqdm.tqdm(open(os.path.join(DATA_DIR,'cu_bgp_routes.txt'),'r'),
+			desc="Parsing BGP table from CU"):
+			fields = [el for el in row.strip().split('  ') if el.strip() != ""]
+			if "/" in row:
+				pref = fields[1].strip()
+				prefl = pref.split('/')[1]
+			elif row.count(".") == 6:
+				pref = fields[1].strip()
+				if pref == "0.0.0.0": continue
+				pref = pref + "/" + prefl
+			if pref is None:
+				continue
+			if row.startswith(" *>"):
+				## selected route
+				as_path = fields[-1].replace('i',' ').strip().split(' ')
+				parsed_as_path = ['14']
+				prev_hop = None
+				for el in as_path:
+					el = el.replace("{","").replace("}","")
+					for ell in el.split(","):
+						try:
+							if int(el) >= 64512 and int(el) <= 65534:
+								## private IP address
+								continue
+						except ValueError:
+							pass
+						if ell == '0': continue
+						if prev_hop != ell:
+							parsed_as_path.append(ell)
+						prev_hop = ell
+				as_paths_by_pref[pref] = parsed_as_path
+				if len(parsed_as_path) == 2 and parsed_as_path[-1] == '16509':
+					print(row)
+			else:
+				continue
+		all_dsts = {}
+		i = 0
+		for row in open(os.path.join(DATA_DIR, 'flow_info', '2024-01.tsv')):
+			i +=1
+			if i == 1:
+				continue
+			fields = row.strip().split('\t')
+			try:
+				all_dsts[fields[5]] = as_paths_by_pref.get(fields[5] + '/32',['','174'])[1]
+			except:
+				import traceback
+				traceback.print_exc()
+				print("ASIOJFOIASHF")
+				print(fields[5])
+				continue
+		with open(os.path.join(CACHE_DIR,'exports','2024-01-dst_to_next_as_hop.csv'),'w') as f:
+			f.write("dst_ip,first_as_hop\n")
+			for dst,first_hop in all_dsts.items():
+				f.write("{},{}\n".format(dst,first_hop))
+			
+
 	def run(self):
 		# self.sync_results()
 		# self.parse_ping_result_set()
 		# self.parse_trace_result_set()
-		self.aspl_from_bgp_routes()
+		# self.aspl_from_bgp_routes()
+		self.next_hops_from_bgp_routes()
 
 if __name__ == "__main__":
 	cma = Campus_Measurement_Analyzer()
