@@ -154,6 +154,7 @@ class Service_Mapper(Campus_Measurement_Analyzer):
 		self.domain_sni_uids_by_building_flows = {}
 		self.domain_sni_uids_by_building_time = {}
 		self.domain_sni_uids_by_hour_bytes = {}
+		self.dstip_to_flow_time = {}
 		# n_every_delete = int(10e6)
 		# p_delete = 1 - 1 / float(n_every_delete)
 		# pct_delete = .1
@@ -204,6 +205,13 @@ class Service_Mapper(Campus_Measurement_Analyzer):
 						self.domain_sni_uids_by_hour_bytes[hour][uid] += float(nb)
 					except KeyError:
 						self.domain_sni_uids_by_hour_bytes[hour][uid] = float(nb)
+
+					try:
+						self.dstip_to_flow_time[ip] += (float(frame_time_end) - float(frame_time))
+					except KeyError:
+						self.dstip_to_flow_time[ip] = (float(frame_time_end) - float(frame_time))
+		### For Shuyue to analyze
+		pickle.dump(self.dstip_to_flow_time, open(os.path.join(CACHE_DIR, 'exports', 'dstip_to_flow_time.pkl'),'wb'))
 
 	def load_not_done_domains(self):
 		"""Loads domains seen in campus network traces."""
@@ -663,6 +671,7 @@ class Service_Mapper(Campus_Measurement_Analyzer):
 		print(round(sum(list(asns_of_interest['2906'].values())) * 100 / interesting_bts, 2))
 		print("Akamai has {} IPs, {} pct. of interesting volume".format(len(asns_of_interest['20940']),
 			round(sum(list(asns_of_interest['20940'].values())) * 100 / interesting_bts, 2)))
+		print(asns_of_interest['2906'])
 
 	
 	def output_service_data_for_shuyue(self):
@@ -670,9 +679,10 @@ class Service_Mapper(Campus_Measurement_Analyzer):
 		## First, parse everything for shuyues time of interest
 		# (add dec/22 - may/23 when they're available)
 		import glob
-		months_of_interest = ['2022-12', '2023-01','2023-02',
-			'2023-03','2023-04', '2023-05', '2023-06', '2023-07', 
-			'2023-11', '2023-12', '2024-01']
+		# months_of_interest = ['2022-12', '2023-01','2023-02',
+		# 	'2023-03','2023-04', '2023-05', '2023-06', '2023-07', 
+		# 	'2023-11', '2023-12', '2024-01']
+		months_of_interest = ['2024-01']
 		all_cache_fns = glob.glob(os.path.join(CACHE_DIR, 'domain_sni_to_service_cache_shuyue_all_months-*.pkl'))
 		months_of_interest = [m for m in months_of_interest if not any(m in fn for fn in all_cache_fns)]
 		n_per_iter = 1

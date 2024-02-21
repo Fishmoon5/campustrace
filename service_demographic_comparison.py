@@ -13,6 +13,17 @@ DEMO_TO_PLOT_LABEL = {
 	'gradfacstaff': "Graduate &\nFaculty",
 	'facstaff': "Faculty",
 }
+serv_to_lab = {
+	'youtube': "Youtube",
+	'icloud': 'iCloud',
+	'primevideo': "Prime\nVideo",
+	'netflix': 'Netflix',
+	'instagram': 'Instagram',
+	'applestore': 'Apple Store',
+	'steam': 'Steam',
+	'tiktok': 'TikTok',
+	'hulu': '\n  Hulu'
+}
 
 class Service_Demographic_Comparison():
 	def __init__(self):
@@ -287,39 +298,58 @@ class Service_Demographic_Comparison():
 		dist_mat = self.get_dist_mat(divider_type, metric, **kwargs)
 		dmat_sum = np.sum(dist_mat, axis=0)
 		
-		cats = ['Bytes', "DNS\nResponses", 'Flows', "Flow\nDuration"]
+		cats = ['Traffic', "DNS\nResponses", 'Flows', "Flow\nDuration"]
 		
 
 		import matplotlib
 		matplotlib.rcParams.update({'font.size': 18})
 		import matplotlib.pyplot as plt
 		service_or_type = kwargs.get('service_or_type', 'service')
+		xticklocs, xticks = [1], ['1']
 		if service_or_type == 'service':
-			n_to_plot = 1000
+			n_to_plot = 100
 			for ploti in range(len(cats) + 2):
 				f,ax = plt.subplots(1,1)
-				f.set_size_inches(12,6)
+				f.set_size_inches(12,4)
 				linestyles=['-', '-.', ':','--']
 
 				if ploti == len(cats) + 1:
-					ordering = ['Flows','Flow\nDuration','DNS\nResponses','Bytes']
+					ordering = ['Flows','Flow\nDuration','DNS\nResponses','Traffic']
 				else:
-					ordering = ['Bytes', "DNS\nResponses", "Flow\nDuration", "Flows"]
+					ordering = ['Traffic', "DNS\nResponses", "Flow\nDuration", "Flows"]
 				for i,lab in enumerate(ordering):
 					if i >= ploti: break
 					divideri = np.where(np.array(cats)==lab)[0][0]
 					ax.semilogx(np.arange(1,n_to_plot+1), self.domains_arr[divideri,0:n_to_plot]*100.0,
-						label=cats[divideri],linestyle=linestyles[divideri])
-				ax.set_xlabel("Rank by Traffic Volume")
-				ax.set_ylabel("Percent of Total Activity")
-				ax.set_xticks([1,10,100,1000])
-				ax.set_xticklabels(['1','10','100','1000'])
-				ax.set_ylim([0,21])
+						label=cats[divideri],linestyle=linestyles[divideri],marker='o')
+					if cats[i] == 'Traffic':
+						for i in range(8):
+							yloc = ((-1)**i - 1) * 1 + self.domains_arr[divideri,i]*100
+							yloc=0
+							if i == 0:
+								xloc = 1
+							elif i <= 4:
+								xloc = i+1
+							else:
+								xloc = i+2
+							print("{} {} {}".format(xloc,yloc,serv_to_lab.get(self.all_services[i])))
+							# ax.text(xloc,yloc,serv_to_lab.get(self.all_services[i]),fontsize=16, rotation=40)
+							xticklocs.append(xloc+.002)
+							xticks.append(serv_to_lab.get(self.all_services[i]))
+				xticklocs.append(11)
+				xticklocs.append(100)
+				xticks.append('10')
+				xticks.append('100')
+				ax.set_xlabel("Overall Service Traffic Volume Contribution Rank")
+				ax.set_ylabel("Percent of Total Activity (%)")
+				ax.set_xticks(xticklocs)
+				ax.set_xticklabels(xticks,rotation=40,fontsize=14)
+				ax.set_ylim([0,15])
 				ax.set_xlim([1,n_to_plot])
 
 				if ploti == len(cats) + 1:
 					ax.legend()
-					plt.savefig('figures/activity_measures_topn-{}.pdf'.format(service_or_type))
+					plt.savefig('figures/activity_measures_topn-{}.pdf'.format(service_or_type), bbox_inches='tight')
 				else:
 					plt.savefig('figures/activity_measures_topn_{}-{}.png'.format(ploti, service_or_type))
 
@@ -565,29 +595,22 @@ class Service_Demographic_Comparison():
 				n_to_plot = 100
 				f,ax = plt.subplots(1,1)
 				f.set_size_inches(12,4)
-				linestyles=['-', '-.', ':','--']
+				linestyles=['-', '-.','--',':']
 
 				# ordering = ['Flows','Flow\nDuration','DNS\nResponses','Bytes']
 				# for i,lab in enumerate(ordering):
 					# divideri = np.where(np.array(cats)==lab)[0][0]
 
-				serv_to_lab = {
-					'youtube': "Youtube",
-					'icloud': 'iCloud',
-					'primevideo': "PrimeVideo",
-					'netflix': 'Netflix',
-					'instagram': 'Instagram',
-					'applestore': 'Apple Store',
-					'steam': 'Steam',
-					'tiktok': 'TikTok',
-					'hulu': 'Hulu'
-				}
+				xticklocs, xticks = [1], ['1']
 				for divideri in range(self.domains_arr.shape[0]):
+					if divideri_to_lab(divideri) == 'Mixed Residents':
+						continue
 					ax.semilogx(np.arange(1,n_to_plot+1), self.domains_arr[divideri,0:n_to_plot]*100.0,
-						label=divideri_to_lab(divideri),linestyle=linestyles[divideri])
+						label=divideri_to_lab(divideri),linestyle=linestyles[divideri], marker='o')
 					if divideri_to_lab(divideri) == 'All Traffic':
 						for i in range(8):
 							yloc = ((-1)**i - 1) * 1 + self.domains_arr[divideri,i]*100
+							yloc=0
 							if i == 0:
 								xloc = 1
 							elif i <= 4:
@@ -595,13 +618,17 @@ class Service_Demographic_Comparison():
 							else:
 								xloc = i+2
 							print("{} {} {}".format(xloc,yloc,serv_to_lab.get(self.all_services[i])))
-							ax.text(xloc,yloc,serv_to_lab.get(self.all_services[i]),fontsize=16)
-
-
+							# ax.text(xloc,yloc,serv_to_lab.get(self.all_services[i]),fontsize=16, rotation=40)
+							xticklocs.append(xloc+.002)
+							xticks.append(serv_to_lab.get(self.all_services[i]))
+				xticklocs.append(11)
+				xticklocs.append(100)
+				xticks.append('10')
+				xticks.append('100')
 				ax.set_xlabel("Overall Service Traffic Volume Contribution Rank")
-				ax.set_ylabel("Percent of Total Traffic Volume")
-				ax.set_xticks([1,10,100])
-				ax.set_xticklabels(['1','10','100'])
+				ax.set_ylabel("Percent of Total Traffic Volume (%)")
+				ax.set_xticks(xticklocs)
+				ax.set_xticklabels(xticks, rotation=40, fontsize=13)
 				ax.set_ylim([0,15])
 				ax.set_xlim([.9,n_to_plot])
 
@@ -609,9 +636,11 @@ class Service_Demographic_Comparison():
 				plt.savefig('figures/similarities_across_{}_{}_topn-{}.pdf'.format(
 					divider_type, kwargs.get('plt_lab',''), service_or_type),
 					bbox_inches='tight')
-				exit(0)
 
 				plt.clf(); plt.close()
+			else:
+				self.compare_us_sandvine(metric)
+
 			n_dividers = len(self.service_bytes_by_divider)
 			fig, axs = plt.subplots(n_dividers, n_dividers, figsize=(11, 10))
 			sorted_rows = list(reversed(np.argsort(dmat_sum)))
@@ -652,6 +681,39 @@ class Service_Demographic_Comparison():
 				divider_type, kwargs.get('plt_lab',''), service_or_type))
 			plt.clf(); plt.close()
 
+	def compare_us_sandvine(self, metric):
+		## Sandvine types
+		cat_order = ['video', 'gaming', 'marketplace', 'socialmedia', 'cloud', 'misc', 'communication',
+			'filesharing', 'music', 'vpn']
+		america_type = {k:v for k,v in zip(cat_order, np.array([73.74,5.77,4.19,3.77,3.52,3.34,2.48,1.43,.92,.83])/100)}
+		apac_type = {k:v for k,v in zip(cat_order, np.array([66.11,7.33,7.19,3.30,5.11,2.9,2.25,3.37,.8,1.62])/100) }
+		emea_type = {k:v for k,v in zip(cat_order, np.array([62.46,3.01,4.2,14.22,2.58,4.38,4.94,2.59,.3,1.33])/100)}
+
+		us_faculty = {}
+		print(self.in_order_dividers['category'])
+		cat_to_i = {cat:i for i,cat in enumerate(self.in_order_dividers['category'])}
+		print(self.all_services)
+		servtype_to_i = {c:[i for i in range(len(self.all_services)) if self.all_services[i] == c][0] for c in cat_order}
+		print(servtype_to_i)
+
+		fac_type = {cat: self.domains_arr[cat_to_i['facstaff'], servtype_to_i[cat]] for cat in cat_order}
+		grad_type = {cat: self.domains_arr[cat_to_i['grad'], servtype_to_i[cat]] for cat in cat_order}
+		print(fac_type)
+		print(grad_type)
+
+		arrs = [america_type,apac_type,emea_type,fac_type,grad_type]
+		labs = ['america','apac','emea','fac','grad']
+		i=0
+		for arri,li in zip(arrs,labs):
+			j=0
+			for arrj,lj in zip(arrs,labs):
+				d = metric(np.array([arri[k] for k in cat_order]), np.array([arrj[k] for k in cat_order]))
+				print("{} vs {} -- {}".format(li,lj,round(d,3)))
+				j+= 1
+				if j > i: break
+			i+= 1
+
+
 	def crosswise_comparisons(self, **kwargs):
 		metrics = [pdf_distance,weighted_jaccard, euclidean,rbo_wrap,spearman, cosine_similarity, jaccard]
 		labs = ['bc','wjac', 'euclidean','rbo','spearman', 'cos_sim', 'jac']
@@ -662,7 +724,7 @@ class Service_Demographic_Comparison():
 		for metric,lab,axis_lab in zip(metrics,labs,ax_labs):
 			print("\n\n\nCOMPUTING METRIC {}\n\n\n".format(lab))
 			self.compare_building_domains(metric, n_doms=1000, plt_lab=lab, axis_lab=axis_lab, **kwargs)
-			# self.compare_activity_measures(metric, plt_lab=lab, axis_lab=axis_lab, **kwargs)
+			self.compare_activity_measures(metric, plt_lab=lab, axis_lab=axis_lab, **kwargs)
 			break
 
 if __name__ == "__main__":

@@ -278,12 +278,13 @@ class Campus_Measurement_Analyzer:
 		rtts_cache_fn = os.path.join(CACHE_DIR, 'rtts.pkl')
 		if not os.path.exists(rtts_cache_fn):
 			targ_to_rtt =  {}
-			times_of_interest = ['1706715933']
+			times_of_interest = ['1706715933','1706817104']
 			all_ping_files = glob.glob(os.path.join(MEASUREMENT_DIR, 'pings-*.json'))
 			all_ping_files = [ping_file for ping_file in all_ping_files if any(toi in ping_file for toi in times_of_interest)]
 
 			for result_fn in tqdm.tqdm(all_ping_files,
 				desc="Parsing RTT measurements."):
+				# result_fn = os.path.join(MEASUREMENT_DIR, 'pings-{}-14.json'.format(times_of_interest[0]))
 				these_results = json.load(open(result_fn,'r'))
 				for result in these_results:
 					if result['type'] != 'ping': continue
@@ -872,7 +873,7 @@ class Campus_Measurement_Analyzer:
 
 
 		# times_of_interest = ['1684845466','1684980072']
-		times_of_interest = ['1706715933']
+		times_of_interest = ['1706715933','1706817104']
 
 
 		for fn in tqdm.tqdm(files,desc="Downloading files from cloud."):
@@ -963,11 +964,11 @@ class Campus_Measurement_Analyzer:
 			
 
 	def run(self):
-		# self.sync_results()
-		# self.parse_ping_result_set()
+		self.sync_results()
+		self.parse_ping_result_set()
 		# self.parse_trace_result_set()
 		# self.aspl_from_bgp_routes()
-		self.next_hops_from_bgp_routes()
+		# self.next_hops_from_bgp_routes()
 
 if __name__ == "__main__":
 	cma = Campus_Measurement_Analyzer()
