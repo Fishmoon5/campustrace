@@ -4,6 +4,19 @@ from helpers import *
 from constants import *
 from google_utilities import *
 from subprocess import call, check_output
+from get_top_ips import get_top_ips
+
+
+
+###### IMC 2023
+# ## 5/11/2023, 5/15/2023, 5/23/2023
+TIMES_OF_INTEREST = ['1683848502', '1684156449','1684845466']
+
+
+
+###### SIGCOMM 2024
+# 1/31/2024, 2/1/2024
+# TIMES_OF_INTEREST = ['1706715933','1706817104']
 
 class Campus_Measurement_Analyzer:
 	def __init__(self):
@@ -278,13 +291,12 @@ class Campus_Measurement_Analyzer:
 		rtts_cache_fn = os.path.join(CACHE_DIR, 'rtts.pkl')
 		if not os.path.exists(rtts_cache_fn):
 			targ_to_rtt =  {}
-			times_of_interest = ['1706715933','1706817104']
 			all_ping_files = glob.glob(os.path.join(MEASUREMENT_DIR, 'pings-*.json'))
-			all_ping_files = [ping_file for ping_file in all_ping_files if any(toi in ping_file for toi in times_of_interest)]
+			all_ping_files = [ping_file for ping_file in all_ping_files if any(toi in ping_file for toi in TIMES_OF_INTEREST)]
 
 			for result_fn in tqdm.tqdm(all_ping_files,
 				desc="Parsing RTT measurements."):
-				# result_fn = os.path.join(MEASUREMENT_DIR, 'pings-{}-14.json'.format(times_of_interest[0]))
+				# result_fn = os.path.join(MEASUREMENT_DIR, 'pings-{}-14.json'.format(TIMES_OF_INTEREST[0]))
 				these_results = json.load(open(result_fn,'r'))
 				for result in these_results:
 					if result['type'] != 'ping': continue
@@ -354,7 +366,6 @@ class Campus_Measurement_Analyzer:
 		ax.set_ylim([0,1.0])
 		plt.savefig('figures/service_locality.pdf')
 
-
 	def parse_trace_result_set(self):
 		cdf_aspl_cache_fn = os.path.join(CACHE_DIR, 'aspl_cdfs.pkl')
 		if not os.path.exists(cdf_aspl_cache_fn):
@@ -363,7 +374,7 @@ class Campus_Measurement_Analyzer:
 			all_data_cache_fn = os.path.join(CACHE_DIR, 'aspls_all_objs.pkl')
 			if not os.path.exists(all_data_cache_fn):
 
-				times_of_interest = ['1683848502', '1684156449','1684845466']
+				times_of_interest = TIMES_OF_INTEREST
 				all_trace_files = glob.glob(os.path.join(MEASUREMENT_DIR, 'traces-*.json'))
 				all_trace_files = [trace_file for trace_file in all_trace_files if any(toi in trace_file for toi in times_of_interest)]
 				
@@ -872,8 +883,7 @@ class Campus_Measurement_Analyzer:
 		files = get_file_list(gdrive, parent_id)
 
 
-		# times_of_interest = ['1684845466','1684980072']
-		times_of_interest = ['1706715933','1706817104']
+		times_of_interest = TIMES_OF_INTEREST
 
 
 		for fn in tqdm.tqdm(files,desc="Downloading files from cloud."):
@@ -899,7 +909,6 @@ class Campus_Measurement_Analyzer:
 
 			json.dump(meas_objs, open(out_fn,'w'))
 			call("rm {}".format(dlfn),shell=True)
-
 
 	def next_hops_from_bgp_routes(self):
 		np.random.seed(31415)
@@ -962,13 +971,83 @@ class Campus_Measurement_Analyzer:
 			for dst,first_hop in all_dsts.items():
 				f.write("{},{}\n".format(dst,first_hop))
 			
+	def get_loc_from_target_list(self):
+		## Get RDNS 
+		## lookup all traceroutes
+		## get cities of all the hops
+		## get some heuristic of mapping hopped cities to end point cities
+		top_ips_dict = get_top_ips(None)
+		self.load_traceroute_helpers()
+
+		parsed_traceroutes_cache = os.path.join(CACHE_DIR, 'parsed_traceroutes.pkl')
+		if not os.path.exists(parsed_traceroutes_cache):
+			
+
+			times_of_interest = TIMES_OF_INTEREST
+			all_trace_files = glob.glob(os.path.join(MEASUREMENT_DIR, 'traces-*.json'))
+			all_trace_files = [trace_file for trace_file in all_trace_files if any(toi in trace_file for toi in times_of_interest)]
+			
+			campus_traffic_destinations_trace_files = [tf for tf in all_trace_files if 'traces-all' not in tf]
+
+			lookup_ips = []
+			for result_fn in tqdm.tqdm(campus_traffic_destinations_trace_files,
+				desc="Parsing result fns to see if we need to map ASNs."):
+				these_results = json.load(open(result_fn,'r'))
+				these_results = [result for result in these_results if result['type'] == 'trace']
+				for result in these_results:
+					try:
+						top_ips_dict[result['dst']]
+					except KeyError:
+						continue
+					lookup_ips.append(self.parse_ripe_trace_result(result, ret_ips=True))
+			self.lookup_asns_if_needed(list(set([ip32_to_24(ip) for res_set in lookup_ips for ip in res_set])))
+			all_objs = []
+			for result_fn in tqdm.tqdm(campus_traffic_destinations_trace_files, 
+				desc="Parsing traceroutes"):
+				these_results = json.load(open(result_fn,'r'))
+				these_results = [result for result in these_results if result['type'] == 'trace']
+				objs = []
+				for result in these_results:
+					try:
+						top_ips_dict[result['dst']]
+					except KeyError:
+						continue
+					objs.append(self.parse_ripe_trace_result(result))
+				all_objs = all_objs + objs
+			pickle.dump(all_objs, open(parsed_traceroutes_cache, 'wb'))
+		else:
+			all_objs = pickle.load(open(parsed_traceroutes_cache,'rb'))
+		all_objs_by_dst = {}
+		for obj in all_objs:
+			if obj is None: continue
+			try:
+				if all_objs_by_dst[obj['dst']]['time'] < obj['time']:
+					all_objs_by_dst[obj['dst']] = obj	
+			except KeyError:
+				all_objs_by_dst[obj['dst']] = obj
+		all_objs = all_objs_by_dst
+
+		keep_dsts = get_intersection(top_ips_dict, all_objs)
+		all_objs = {t: all_objs[t] for t in keep_dsts}
+
+		total_traffic = sum(list(top_ips_dict.values()))
+		pct_traffic = round(sum(top_ips_dict[t] for t in all_objs) / total_traffic * 100.0 ,2)
+		print("{} pct ({}) of traceroutes, {} pct of traffic, reached a destination".format(100 * len(all_objs) / len(top_ips_dict),
+			len(all_objs), pct_traffic))
+
+		for obj in all_objs.values():
+			print(obj)
+			exit(0)
+
 
 	def run(self):
-		self.sync_results()
-		self.parse_ping_result_set()
+		# self.sync_results()
+		# self.parse_ping_result_set()
 		# self.parse_trace_result_set()
 		# self.aspl_from_bgp_routes()
 		# self.next_hops_from_bgp_routes()
+
+		self.get_loc_from_target_list()
 
 if __name__ == "__main__":
 	cma = Campus_Measurement_Analyzer()
