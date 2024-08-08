@@ -20,7 +20,7 @@ def run_pipeline():
 	all_targets_fn = os.path.join(DATA_DIR, 'whole_ipspace_traceroute_targets.txt')
 
 	
-	for msmt_type in ['traces-all', 'traces','pings']:
+	for msmt_type in ['traces','pings']:
 		print("Running measurement type {}".format(msmt_type))
 
 		if msmt_type == 'traces-all':

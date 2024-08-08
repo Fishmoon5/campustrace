@@ -274,12 +274,11 @@ class Service_Demographic_Comparison():
 	def setup_activity_comparison_data(self, **kwargs):
 		### Want to build separator by activity measure
 		### i.e., DNS -> dns requests corresponding to service for each service
-		sm = Service_Mapper()
-		self.activity_by_service = sm.get_service_activity_measure_dists(**kwargs)
+		self.sm = Service_Mapper()
+		self.activity_by_service = self.sm.get_service_activity_measure_dists(**kwargs)
 
 		self.all_services = list(set(service for unit,services in self.activity_by_service.items()
 			 for service in services))
-
 
 		self.units = sorted(list(self.activity_by_service))
 		print(self.units)
@@ -563,7 +562,6 @@ class Service_Demographic_Comparison():
 				except KeyError:
 					self.service_bytes_by_category['all traffic'][service] = nb
 
-
 	def compare_building_domains(self, metric, **kwargs):
 		self.setup_service_data(**kwargs)		
 
@@ -713,7 +711,6 @@ class Service_Demographic_Comparison():
 				if j > i: break
 			i+= 1
 
-
 	def crosswise_comparisons(self, **kwargs):
 		metrics = [pdf_distance,weighted_jaccard, euclidean,rbo_wrap,spearman, cosine_similarity, jaccard]
 		labs = ['bc','wjac', 'euclidean','rbo','spearman', 'cos_sim', 'jac']
@@ -727,13 +724,160 @@ class Service_Demographic_Comparison():
 			self.compare_activity_measures(metric, plt_lab=lab, axis_lab=axis_lab, **kwargs)
 			break
 
+
+	def get_rtts_distances_by_service(self, **kwargs):
+		plot_cache_fn = os.path.join(CACHE_DIR, 'rtts-and-distances-plot-cache.pkl')
+		if not os.path.exists(plot_cache_fn):
+			self.setup_activity_comparison_data(**kwargs)
+			self.sm.compute_domains_to_services()
+			n_services = 100
+
+			most_popular_services = sorted(list(self.activity_by_service['bytes']), key = lambda el : -1 * self.activity_by_service['bytes'][el])[0:n_services]
+			# print("MPS: {}".format(most_popular_services))
+
+			service_to_dst_ip = {mps:{} for mps in most_popular_services}
+			for dst_ip,uids in self.sm.dstip_to_domain_sni.items():
+				for uid,nb in uids.items():
+					try:
+						service = self.sm.domain_sni_to_service[uid]
+					except KeyError:
+						continue
+					try:
+						service_to_dst_ip[service]
+					except KeyError:
+						continue
+					try:
+						service_to_dst_ip[service][dst_ip] += nb
+					except KeyError:
+						service_to_dst_ip[service][dst_ip] = nb
+			service_to_distances = {mps: {} for mps in most_popular_services}
+			service_to_rtts = {mps: {} for mps in most_popular_services}
+			all_nb, mapped_rtt_nb, mapped_distance_nb = 0,0,0
+			rtts = pickle.load(open(os.path.join(CACHE_DIR, 'rtts.pkl'),'rb'))
+			distances = pickle.load(open(os.path.join(CACHE_DIR,'distances.pkl'),'rb'))
+			dst_ip_locs = pickle.load(open(os.path.join(CACHE_DIR, 'dst_ip_locs.pkl'),'rb'))
+			for service in service_to_dst_ip:
+				for dst_ip,nb in service_to_dst_ip[service].items():
+					all_nb += nb
+					try:
+						distance = distances[dst_ip]
+						try:
+							service_to_distances[service][distance] += nb
+						except KeyError:
+							service_to_distances[service][distance] = nb
+						mapped_distance_nb += nb
+					except KeyError:
+						pass	
+					try:
+						rtt = rtts[dst_ip]['min']
+						try:
+							service_to_rtts[service][rtt] += nb
+						except KeyError:
+							service_to_rtts[service][rtt] = nb
+						mapped_rtt_nb += nb
+					except KeyError:
+						pass
+			print("{} pct mapped for RTTs".format(round(100*mapped_rtt_nb/all_nb,2)))
+			print("{} pct mapped for Distances".format(round(100*mapped_distance_nb/all_nb,2)))
+
+			rdns_names = {}
+			ip_to_rdns = {}
+			rdns_to_ip = {}
+			for row in open(os.path.join('tmp','addr_to_rdns.txt'), 'r'):
+				ip,rdns = row.strip().split('\t')
+				rdns = rdns.strip()
+				ip = ip.strip()
+				if rdns[-1] == ".":
+					rdns = rdns[0:-1]
+				ip_to_rdns[ip] = rdns.lower()
+				rdns_to_ip[rdns.lower()] = ip
+
+			delta_distances_arr, delta_rtts_arr = [], []
+			for service in most_popular_services:
+				if len(service_to_distances[service]) > 0:
+					_distances = list(service_to_distances[service])
+					nbs = list([service_to_distances[service][distance] for distance in _distances])
+					delta_distances_arr.append(np.average(_distances,weights=nbs) - np.min(_distances))
+					if delta_distances_arr[-1] > 0:
+						print('\n')
+						print("Service {} going on average {} ms away from minimum (distance-wise)".format(service,delta_distances_arr[-1]))
+						total_nb = sum(list(service_to_dst_ip[service].values()))
+						for dst_ip,nb in sorted(service_to_dst_ip[service].items(), key = lambda el : -1 * el[1]):
+							if nb/total_nb > .01:
+								try:
+									distances[dst_ip]
+									dst_ip_locs[dst_ip]
+									if distances[dst_ip] > 10:
+										print("{} pct of bytes going {} km away to {} ({}) {}".format(
+											round(nb * 100.0/total_nb,2), distances[dst_ip], dst_ip_locs[dst_ip],ip_to_rdns.get(dst_ip,'nordns'),dst_ip))
+								except KeyError:
+									pass
+				else:
+					print("Note -- absolutely no distance information for service {}".format(service))
+				if len(service_to_rtts[service]) > 0:
+					_rtts = list(service_to_rtts[service])
+					nbs = list([service_to_rtts[service][rtt] for rtt in _rtts])
+					delta_rtts_arr.append(np.average(_rtts,weights=nbs) - np.min(_rtts))
+				else:
+					print("Note -- absolutely no rtt information for service {}".format(service))
+
+			pickle.dump([delta_rtts_arr,delta_distances_arr], open(plot_cache_fn,'wb'))
+
+		else:
+			delta_rtts_arr,delta_distances_arr = pickle.load(open(plot_cache_fn,'rb'))
+
+
+		import matplotlib
+		matplotlib.rcParams.update({'font.size': 22})
+		import matplotlib.pyplot as plt
+		f,ax = plt.subplots(1,1)
+		f.set_size_inches(12,3)
+
+		
+		x,cdf_x = get_cdf_xy(delta_rtts_arr,logx=True,n_points=80)
+		cdf_x = np.array(cdf_x)
+		cdf_x = 1 - cdf_x
+		ax.semilogx(x,cdf_x,label="RTT",marker='.',markersize=10)
+		nm = 'lat'
+		for _x in [10,30]:
+			print("{} -- {} ms --- {} pct".format(nm,_x,cdf_x[np.argmin(np.abs(x-_x))]))
+
+		delta_distances_arr = np.array(delta_distances_arr) * .01 # convert to ms
+		x,cdf_x = get_cdf_xy(delta_distances_arr,logx=True,n_points=80)
+		cdf_x = np.array(cdf_x)
+		cdf_x = 1 - cdf_x
+		ax.semilogx(x,cdf_x,label="Great-Circle Distance",marker='p',markersize=10)
+		nm = 'dist'
+		for _x in [10,30]:
+			print("{} -- {} ms --- {} pct".format(nm,_x,cdf_x[np.argmin(np.abs(x-_x))]))
+
+
+		ax.legend(fontsize=24)
+		ax.set_xlabel("Avg. - Min. Great-Circle Distance / Latency to Service (ms)")
+		ax.set_ylabel("CCDF of \nTop-100 Services")
+		ax.set_xlim([1,100])
+		ax.set_xticks([1,10,100])
+		ax.set_yticks([0,.25,.5,.75,1.0])
+		ax.set_xticklabels(['1','10','100'])
+		ax.grid(True)
+		plt.savefig('figures/rtts-and-distances-avg-min-diff.pdf', bbox_inches='tight')
+
+		## Question -- what are these missing services, need to do more traceroutes, make sure calc is how shuyue did hers
+
+
 if __name__ == "__main__":
+	### service -> facetime, hulu, etc
+	### type -> video, messaging, etc
+
 	# sdc = Service_Demographic_Comparison()
 	# sdc.unit_representativity()
 	# sdc = Service_Demographic_Comparison()
 	# sdc.temporal_representativity()
 	sdc = Service_Demographic_Comparison()
-	sdc.crosswise_comparisons(service_or_type='service')
+	# sdc.crosswise_comparisons(service_or_type='service')
 	# sdc = Service_Demographic_Comparison()
 	# sdc.crosswise_comparisons(service_or_type='type')
+
+	sdc = Service_Demographic_Comparison()
+	sdc.get_rtts_distances_by_service(service_or_type='service')
 

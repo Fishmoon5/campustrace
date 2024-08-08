@@ -155,6 +155,7 @@ class Service_Mapper(Campus_Measurement_Analyzer):
 		self.domain_sni_uids_by_building_time = {}
 		self.domain_sni_uids_by_hour_bytes = {}
 		self.dstip_to_flow_time = {}
+		self.dstip_to_domain_sni = {}
 		# n_every_delete = int(10e6)
 		# p_delete = 1 - 1 / float(n_every_delete)
 		# pct_delete = .1
@@ -205,6 +206,14 @@ class Service_Mapper(Campus_Measurement_Analyzer):
 						self.domain_sni_uids_by_hour_bytes[hour][uid] += float(nb)
 					except KeyError:
 						self.domain_sni_uids_by_hour_bytes[hour][uid] = float(nb)
+					try:
+						self.dstip_to_domain_sni[ip]
+					except KeyError:
+						self.dstip_to_domain_sni[ip] = {}
+					try:
+						self.dstip_to_domain_sni[ip][uid] += float(nb)
+					except KeyError:
+						self.dstip_to_domain_sni[ip][uid] = float(nb)
 
 					try:
 						self.dstip_to_flow_time[ip] += (float(frame_time_end) - float(frame_time))
@@ -623,6 +632,7 @@ class Service_Mapper(Campus_Measurement_Analyzer):
 				pickle.dump({
 					'popular_domains': self.popular_domains,
 					'domain_sni_to_service': self.domain_sni_to_service,
+					'dstip_to_domain_sni': self.dstip_to_domain_sni,
 					'sorted_unmappable_domains': self.sorted_unmappable_domains,
 					'domain_sni_uids_by_building_bytes': self.domain_sni_uids_by_building_bytes,
 					'domain_sni_uids_by_building_flows': self.domain_sni_uids_by_building_flows,
@@ -634,6 +644,7 @@ class Service_Mapper(Campus_Measurement_Analyzer):
 			cache = pickle.load(open(cache_fn, 'rb'))
 			self.popular_domains = cache['popular_domains']
 			self.domain_sni_to_service = cache['domain_sni_to_service']
+			self.dstip_to_domain_sni = cache['dstip_to_domain_sni']
 			self.sorted_unmappable_domains = cache['sorted_unmappable_domains']
 			self.domain_sni_uids_by_building_bytes = cache['domain_sni_uids_by_building_bytes']
 			self.domain_sni_uids_by_building_flows = cache['domain_sni_uids_by_building_flows']

@@ -1,4 +1,4 @@
-import os,glob,numpy as np, json, tqdm, csv, pytricia, gzip, matplotlib.pyplot as plt
+import os,glob,numpy as np, json, tqdm, csv, pytricia, gzip, matplotlib.pyplot as plt, time
 from vasilis_traceroute import Traceroute
 from helpers import *
 from constants import *
@@ -9,14 +9,14 @@ from get_top_ips import get_top_ips
 
 
 ###### IMC 2023
-# ## 5/11/2023, 5/15/2023, 5/23/2023
-TIMES_OF_INTEREST = ['1683848502', '1684156449','1684845466']
+# # ## 5/11/2023, 5/15/2023, 5/23/2023
+# TIMES_OF_INTEREST = ['1683848502', '1684156449','1684845466']
 
 
 
 ###### SIGCOMM 2024
-# 1/31/2024, 2/1/2024
-# TIMES_OF_INTEREST = ['1706715933','1706817104']
+## 1/31/2024, 2/1/2024
+TIMES_OF_INTEREST = ['1706715933','1706817104']
 
 class Campus_Measurement_Analyzer:
 	def __init__(self):
@@ -300,6 +300,9 @@ class Campus_Measurement_Analyzer:
 				these_results = json.load(open(result_fn,'r'))
 				for result in these_results:
 					if result['type'] != 'ping': continue
+					if result['dst'] == "72.21.17.49":
+						print(result)
+						exit(0)
 					for p in result['responses']:
 						try:
 							targ_to_rtt[result['dst']].append(p['rtt'])
@@ -1027,18 +1030,313 @@ class Campus_Measurement_Analyzer:
 				all_objs_by_dst[obj['dst']] = obj
 		all_objs = all_objs_by_dst
 
+		missing_dsts = get_difference(top_ips_dict, all_objs)
+		for missing_dst in missing_dsts:
+			all_objs[missing_dst] = {
+				'src': '128.59.22.38',
+				'dst': missing_dst,
+				'reached_dst_network': False,
+				'reached_dst': False,
+				'ip_paths': [['128.59.22.38'], [missing_dst]],
+				'rtts': [[0],[np.inf]],
+				'as_paths': [],
+				'time': time.time(),
+			}
+
 		keep_dsts = get_intersection(top_ips_dict, all_objs)
 		all_objs = {t: all_objs[t] for t in keep_dsts}
 
 		total_traffic = sum(list(top_ips_dict.values()))
-		pct_traffic = round(sum(top_ips_dict[t] for t in all_objs) / total_traffic * 100.0 ,2)
+		traffic_reached_dst = sum(top_ips_dict[t] for t in all_objs)
+		pct_traffic = round(traffic_reached_dst / total_traffic * 100.0 ,2)
 		print("{} pct ({}) of traceroutes, {} pct of traffic, reached a destination".format(100 * len(all_objs) / len(top_ips_dict),
 			len(all_objs), pct_traffic))
 
-		for obj in all_objs.values():
-			print(obj)
+		every_ip_address = list(set(ip for obj in all_objs.values() for hop in obj['ip_paths'] for ip in hop))
+		domain_to_geo_fn_matcher = os.path.join('tmp', 'hoiho-results*.json')
+		tmp_addr_lookup_fn = os.path.join('tmp', 'addr_to_do_rdns.txt')
+		lookups_output_fn = os.path.join('tmp', 'addr_to_rdns.txt')
+		if not os.path.exists(lookups_output_fn):
+			with open(tmp_addr_lookup_fn, 'w') as f:
+				for ip in every_ip_address:
+					f.write("{}\n".format(ip))
+			print("Calling...")
+			call("cat {} | ~/go/bin/hakrevdns -t 8 > {}".format(tmp_addr_lookup_fn,lookups_output_fn), shell=True)
+			print("Done!")
+		ip_to_rdns = {}
+		rdns_to_ip = {}
+		for row in open(lookups_output_fn, 'r'):
+			ip,rdns = row.strip().split('\t')
+			rdns = rdns.strip()
+			ip = ip.strip()
+			if rdns[-1] == ".":
+				rdns = rdns[0:-1]
+			ip_to_rdns[ip] = rdns.lower()
+			rdns_to_ip[rdns.lower()] = ip
+		all_hns = list(set(list(ip_to_rdns.values())))
+		n_sets = int(np.ceil(len(all_hns)/20000))
+		hn_sets = split_seq(all_hns,n_sets)
+		for i,hn_set in enumerate(hn_sets):
+			hn_lookup_fn = os.path.join('tmp', 'hostnames_to_lookup_with_hoiho-{}.txt'.format(i))
+			with open(hn_lookup_fn, 'w') as f:
+				for hn in hn_set:
+					f.write("{}\n".format(hn))
+		if len(glob.glob(domain_to_geo_fn_matcher)) == 0:
+			print("Now run hoiho")
+			print("Remember to change WDC to comma-free in hoiho output")
+			exit(0)
+		else:
+			all_rdns_results = []
+			for domain_to_geo_fn in glob.glob(domain_to_geo_fn_matcher):
+				all_rdns_results.append(json.load(open(domain_to_geo_fn,'r')))
+		ip_to_loc = {}
+		kw_place_to_hoiho_place = {}
+		for row in open(os.path.join(DATA_DIR, 'custom_place_to_hoiho_place.txt'),'r'):
+			try:
+				hoihoplace,kwplace = row.strip().split(',')
+				if kwplace == '':
+					kwplace = hoihoplace
+			except ValueError:
+				continue
+			kw_place_to_hoiho_place[kwplace.strip().lower()] = hoihoplace.strip().lower()
+		custom_kw_mapping_fn = os.path.join(DATA_DIR, 'custom_geo_to_place.txt')
+		custom_kw_mapping = {}
+		for row in open(custom_kw_mapping_fn,'r'):
+			kw,place = row.strip().split(',')
+			custom_kw_mapping[kw.lower()] = kw_place_to_hoiho_place[place.lower()]
+		print(custom_kw_mapping)
+		# some custom ones too
+		hoiho_place_to_loc = {
+			'hyderabad': (17.43,78.39),
+			'ontario': (50.47,-86.98),
+			'calgary': (50.94,-114.0),
+			'united arab emirates': (24.26,54.48),
+			'bahrain': (26.11,50.54),
+		}
+		for rdns_results_set in all_rdns_results:
+			for result in rdns_results_set['matches']:
+				if 'place' in result:
+					hoiho_place_to_loc[result['place'].lower()] = (result['lat'], result['lng'])
+				else:
+					# print(result)
+					continue
+				ip = rdns_to_ip[result['hostname']]
+				ip_to_loc[ip] = (result['hostname'], result.get('place', '?'), 
+					result.get('lat', 'maphoihonolat'), result.get('lng', 'maphoihonolng'))
+				if ip_to_loc[ip][2] == 'maphoihonolat':
+					print(result)
+					exit(0)
+
+		## load RIPE IPMAP https://ftp.ripe.net/ripe/ipmap/
+		ipmap_info = {}
+		for row in open(os.path.join(DATA_DIR, 'geolocations_2023-05-26.csv'),'r'):
+			fields  = row.strip().split(',')
+			lat = fields[-3]
+			lon = fields[-2]
+			place = fields[-7] + "-" + fields[-6]
+			ip = fields[0]
+			ipmap_info[ip.split('/')[0]] = ('', place,lat,lon)
+		## load IXP data (from loqman)
+		ixp_info = {}
+		ixp_name_to_hoiho_place = {}
+		for row in open(os.path.join(DATA_DIR, 'ixp_name_to_place.txt'),'r'):
+			ixp,place = row.strip().split(',')
+			place = kw_place_to_hoiho_place.get(place,place)				
+			ixp_name_to_hoiho_place[ixp] = place
+		for row in open(os.path.join(DATA_DIR, 'ixp_addresses.txt'), 'r'):
+			if row.startswith("#"): continue
+			addr,_,ixpname = row.strip().split('\t')
+			locname = ixp_name_to_hoiho_place.get(ixpname,ixpname)
+			try:
+				lat,lon = hoiho_place_to_loc[locname]
+				ixp_info[addr] = ('',place,lat,lon)
+			except KeyError:
+				ixp_info[addr] = locname
+
+		loc_to_hoiho_place = {}
+		for place,loc in hoiho_place_to_loc.items():
+			loc_to_hoiho_place[loc] = place
+
+
+		## geolocate using other methods
+		every_single_ip_address = list(all_objs)
+		every_single_ip_address = list(set(every_single_ip_address + list(set([ip_hop for obj in all_objs.values() for hop in obj['ip_paths'] for ip_hop in hop]))))
+		print_strs = []
+		for dst in every_single_ip_address:
+			try:
+				ip_to_loc[dst] = ipmap_info[dst]
+			except KeyError:
+				pass
+			try:
+				locdata = ixp_info[dst]
+				if type(locdata) == str:
+					print_strs.append("Need to populate locdata for {}".format(locdata))
+					continue
+				ip_to_loc[dst] = locdata
+			except KeyError:
+				pass
+		if len(print_strs) > 0:
+			print_strs = list(set(print_strs))
+			for print_str in print_strs:
+				print(print_str)
 			exit(0)
 
+		for rdns, ip in rdns_to_ip.items():
+			try:
+				ip_to_loc[ip]
+				continue
+			except KeyError:
+				pass
+			found_place = None
+			for kw,place in custom_kw_mapping.items():
+				if kw in rdns:
+					found_place = place
+					break
+			if found_place is not None:
+				lat = hoiho_place_to_loc[found_place][0]
+				lng = hoiho_place_to_loc[found_place][1]
+				ip_to_loc[ip] = (rdns, found_place, lat, lng)
+			# else:
+				# print("NO INFO: {}".format(rdns))
+				# if np.random.random() > .99:
+				# 	exit(0)
+
+		dst_to_geo_path = {}
+		dst_to_ip_path = {}
+		dst_to_rtt_path = {}
+		for dst, obj in all_objs.items():
+			this_geo_path = []
+			this_ip_path = []
+			dst_to_rtt_path[dst] = []
+			for rtts in obj['rtts']:
+				if len(rtts) == 0:
+					dst_to_rtt_path[dst].append(np.inf)
+				else:
+					dst_to_rtt_path[dst].append(np.min(rtts))
+			for hop in obj['ip_paths']:
+				hop_geo = []
+				hop_ip = []
+				for ip in hop:
+					hop_geo.append(ip_to_loc.get(ip, ip_to_rdns.get(ip,'?')))
+					hop_ip.append(ip)
+				hop_geo = set(hop_geo)
+				hop_ip = list(set(hop_ip))
+				if len(hop_geo) > 1 and "?" in hop_geo:
+					hop_geo = get_difference(hop_geo, ['?'])
+				this_geo_path.append(list(hop_geo)[0])
+				this_ip_path.append(hop_ip)
+			dst_to_geo_path[dst] = this_geo_path
+			dst_to_ip_path[dst] = this_ip_path
+
+
+		dst_to_end_loc = {}
+		n_ms_of_dst = 1 ## if we geolocate anything within N ms to the same RTT as the dst, say its geolocated
+		geo_mapped_volume = 0
+		rtts = pickle.load(open(os.path.join(CACHE_DIR, 'rtts.pkl'),'rb'))
+		cum_vol = 0
+
+		total_traffic_we_have = sum(top_ips_dict.get(dst,0) for dst in all_objs)
+
+		### Check that addresses aren't anycast
+		anycast_addresses = pytricia.PyTricia()
+		for row in open(os.path.join(DATA_DIR, 'anycast_prefixes_nov2023.csv'),'r'):
+			pref = row.strip()
+			anycast_addresses[pref + '/24'] = 'wmop1'
+
+		for dst,obj in sorted(all_objs.items(), key = lambda el : -1 * top_ips_dict[el[0]]):
+			dst_is_anycast = anycast_addresses.get(dst) is not None
+
+			if dst == '13.107.42.14':
+				verb=True
+			else:
+				verb=False
+			cum_vol += top_ips_dict[dst]
+			### See if we've successfully geolocated this dst
+			end_rtt = dst_to_rtt_path[dst][-1]
+			if end_rtt == np.inf:
+				end_rtt = rtts.get(dst, {'min':np.inf})['min']
+			if type(dst_to_geo_path[dst][-1]) == tuple and not dst_is_anycast: ## we've mapped the end point
+				if verb:
+					print(dst_to_geo_path[dst])
+				dst_to_end_loc[dst] = (dst_to_geo_path[dst][-1][2], dst_to_geo_path[dst][-1][3])
+			else: ## we haven't mapped the endpoint, but maybe mapped something near the endpoint
+				for geo_hop,rtt_hop,ip_hop in zip(dst_to_geo_path[dst], dst_to_rtt_path[dst], dst_to_ip_path[dst]):
+					if any(anycast_addresses.get(_ip_hop) is not None for _ip_hop in ip_hop):
+						continue
+					if verb:
+						print("{} {}".format(geo_hop,rtt_hop))
+					if type(geo_hop) == tuple and np.abs(rtt_hop - end_rtt) < n_ms_of_dst:
+						dst_to_end_loc[dst] = (geo_hop[2], geo_hop[3])
+						break
+			try:
+				dst_to_end_loc[dst]
+				geo_mapped_volume += top_ips_dict[dst]
+				continue
+			except KeyError:
+				pass
+			try:
+				# no traceroute but we still know where it is
+				if dst_is_anycast:
+					raise KeyError
+				dst_to_end_loc[dst] = (ip_to_loc[dst][2], ip_to_loc[dst][3])
+				geo_mapped_volume += top_ips_dict[dst]
+				continue
+			except KeyError:
+				pass
+
+			if end_rtt < 1 or rtts.get(dst,{'min':np.inf})['min'] < 1:
+				## Nyc
+				dst_to_end_loc[dst] = hoiho_place_to_loc['new york']
+				geo_mapped_volume += top_ips_dict[dst]
+				continue
+
+			# No rdns info
+			if dst_to_geo_path[dst][-1] == "?" and dst_to_geo_path[dst][-2] == "?": continue
+			# Already have info
+			if type(dst_to_geo_path[dst][-1]) == tuple or type(dst_to_geo_path[dst][-2]) == tuple: continue
+			# if cum_vol / total_traffic_we_have < .9:
+			# 	n_to_print = 4
+			# 	print("\nDst: {}, {}".format(dst,round(cum_vol/total_traffic_we_have,2)))
+			# 	for ip_hop,geo_hop,rtt in zip(dst_to_ip_path[dst][-n_to_print:],
+			# 		dst_to_geo_path[dst][-n_to_print:], dst_to_rtt_path[dst][-n_to_print:]):
+			# 		rdns = list([ip_to_rdns.get(_ip_hop,'NoRDNS') for _ip_hop in ip_hop])
+			# 		print("{} ({}, {} ms) -> {}".format(ip_hop,rdns,rtt,geo_hop))
+
+		### Do distance CDF 
+		import geopy.distance
+		distances = []
+		dist_cache = {}
+		dst_ip_locs = {}
+		nyc_lat_lon = hoiho_place_to_loc['new york']
+		dst_to_distance = {}
+		for dst, (lat,lon) in dst_to_end_loc.items():
+			try:
+				distance = dist_cache[nyc_lat_lon,(lat,lon)]
+			except KeyError:
+				distance = geopy.distance.geodesic(nyc_lat_lon,(lat,lon)).km
+				dist_cache[nyc_lat_lon,(lat,lon)] = distance
+			distances.append((distance, top_ips_dict[dst]))
+			dst_to_distance[dst] = distance
+			dst_ip_locs[dst] = loc_to_hoiho_place.get((lat,lon), (lat,lon))
+
+		pickle.dump(dst_to_distance, open(os.path.join(CACHE_DIR, 'distances.pkl'),'wb'))
+		pickle.dump(dst_ip_locs, open(os.path.join(CACHE_DIR, 'dst_ip_locs.pkl'),'wb'))
+
+		x,cdf_x = get_cdf_xy(distances, weighted=True)
+		plt.plot(x,cdf_x,label="Distance (km)")
+
+		weighted_rtts = list([(rtt['min'],top_ips_dict.get(dst,0)) for dst,rtt in rtts.items()])
+		x,cdf_x = get_cdf_xy(weighted_rtts, weighted=True, logx=True)
+		plt.semilogx(x,cdf_x,label="RTTs (ms)")
+		plt.grid(True)
+		plt.xlabel("Great-Circle Distance/Min. Latency to Residential Network")
+		plt.ylabel("CDF of Traffic")
+		plt.xlim([1,10000])
+		plt.legend()
+		plt.savefig('figures/rtts-and-distance.pdf')
+
+
+		print("{} pct of volume mapped to a destination location".format(geo_mapped_volume * 100 / total_traffic))
 
 	def run(self):
 		# self.sync_results()
