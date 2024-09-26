@@ -91,15 +91,16 @@ def find_multi_column(*args):
 							ip_tups_of_interest[dst,src]
 						except KeyError:
 							continue
-					row = ('flow', src, dst, row[11])
+					row = ('flow', src, dst, fields[15])
 					out_fp.write("\t".join(row) + '\n')
-					# if np.random.random() >.9999:
-					# 	break
+				# 	if np.random.random() >.9999:
+				# 		break
+				# break
 
 			in_both = get_intersection(list(all_src_dst), list(all_dns_src_dst))
 			# print("IN DNS: {}, IN FLOW: {}, IN BOTH: {}".format(len(all_dns_src_dst), len(all_src_dst), len(in_both)))
 			# call('rm -rf {}'.format(tmp_out_dir),shell=True)
-	
+		
 	return 'ok'
 
 class Multiple_DNS:
@@ -174,7 +175,7 @@ class Multiple_DNS:
 						srcdst_dns_id_to_group_id[src,dst] = {}
 					srcdst_dns_id_to_group_id[src,dst][srcdst_to_dns_times[src,dst][-1][0]] = gid_ctr
 				gid_ctr += 1
-			# if np.random.random() > .999999:break		
+				if np.random.random() > .9999:break		
 		for k,v in srcdst_to_dns_times.items(): # sort in time
 			srcdst_to_dns_times[k] = sorted(v, key = lambda el : el[1])
 		
@@ -182,6 +183,8 @@ class Multiple_DNS:
 			fields = row.strip().split('\t')
 			if fields[0] == 'flow':
 				_,src,dst,dts = fields
+				print(fields)
+				print(dts)
 				t_occurred = datetime.datetime.strptime(dts, t_fmt)
 				
 				## most recent dns flow with this src,dst
@@ -202,7 +205,10 @@ class Multiple_DNS:
 					srcdst_dns_group_id_to_a_ctr[src,dst][group_id][dst] += 1
 				except KeyError:
 					srcdst_dns_group_id_to_a_ctr[src,dst][group_id][dst] = 1
-			# if np.random.random() > .9999:break		
+				if np.random.random() > .9999:break		
+		for k in srcdst_to_dns_times:
+			print("{} -> {}".format(k,srcdst_to_dns_times[k]))
+			if np.random.random() > .99:break
 
 		print(srcdst_dns_group_id_to_a_ctr)
 
