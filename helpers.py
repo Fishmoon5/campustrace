@@ -1,4 +1,4 @@
-import numpy as np, csv, socket, struct, os, re, geopy.distance, json, pickle, time
+import numpy as np, csv, socket, struct, os, re, geopy.distance, json, pickle, time, matplotlib, matplotlib.pyplot as plt
 from subprocess import call, check_output
 import geoip2.database
 from bisect import bisect_left
@@ -8,6 +8,35 @@ from constants import *
 ### This file contains helper functions. I use these helper functions in all my projects
 ### so some of them might be irrelevant.
 
+def get_figure(l=7,h=3):
+	plt.clf()
+	plt.close()
+
+	font = {'size'   : 14}
+	matplotlib.rc('font', **font)
+	f,ax = plt.subplots(1)
+	f.set_size_inches(l,h)
+	return f,ax
+
+def save_figure(fn):
+	plt.savefig(os.path.join('figures', fn), bbox_inches='tight')
+	plt.clf()
+	plt.close()
+
+
+def find_mp(arr, v):
+	## find insert point of v into arr in log time
+	if v < arr[0]:
+		return 0
+	if v > arr[-1]:
+		return len(arr)
+	curr_k = len(arr)//2
+	if v < arr[curr_k]:
+		return find_mp(arr[0:curr_k], v)
+	elif v > arr[curr_k]:
+		return curr_k + find_mp(arr[curr_k:], v)
+	else:
+		return curr_k
 
 def domain_to_domainstr(s):
 	if s.startswith("https://"):
